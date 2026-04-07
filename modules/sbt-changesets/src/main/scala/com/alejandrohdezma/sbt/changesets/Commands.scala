@@ -123,6 +123,8 @@ object Commands {
        |graph.
        |
        |Fails the build if any modules are missing changeset entries.
+       |Set CHANGESET_SKIP_VALIDATION=true to skip validation while still
+       |computing affected modules.
        |Suitable as input for a GitHub Actions matrix strategy.""".stripMargin
   ) { state =>
     val base    = Project.extract(state).get(ThisBuild / baseDirectory)
@@ -131,7 +133,11 @@ object Commands {
     val changed = changedModules(state)
 
     // Validate changesets for changed modules
-    if (changed.nonEmpty) {
+    val skipValidation = sys.env.get("CHANGESET_SKIP_VALIDATION").contains("true")
+
+    if (changed.nonEmpty && skipValidation)
+      state.log.warn("CHANGESET_SKIP_VALIDATION is set. Skipping changeset validation.")
+    else if (changed.nonEmpty) {
       val moduleNames = extractModuleNames(state)
       val changesets  = parseAndValidate(base / ".changeset", moduleNames, state.log)
 
