@@ -127,6 +127,11 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+        # Check for an existing open PR before force-pushing (force-pushing
+        # to a branch with a closed PR can cause GitHub to reopen it, which
+        # would make a post-push query find a stale PR).
+        EXISTING=$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number // empty' 2>/dev/null || echo "")
+
         # Commit and force-push
         git checkout -B "$BRANCH"
         git add -A
@@ -134,8 +139,6 @@ runs:
         git push --force origin "$BRANCH"
 
         # Create or update PR
-        EXISTING=$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || echo "")
-
         if [ -n "$EXISTING" ]; then
           gh pr edit "$EXISTING" --body-file "$SUMMARY_FILE"
           echo "Updated PR #$EXISTING"
