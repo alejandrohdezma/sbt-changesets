@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.1.0")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.2.0")
 ```
 
 This plugin depends on [sbt-modules](https://github.com/alejandrohdezma/sbt-modules), which is pulled in automatically. It expects modules to be defined using `module` instead of `project` in your `build.sbt`, with source code living under `modules/<module-name>/`. See the [sbt-modules documentation](https://github.com/alejandrohdezma/sbt-modules) for details.
@@ -62,6 +62,8 @@ On pull requests, run `changesetStatus` to ensure every modified module has at l
 
 For CI matrix builds, `changesetAffected` does the same validation and writes `target/changeset/affected.json` — a JSON array of affected module names (including transitive dependents) that you can feed into a CI like GitHub Actions matrix.
 
+If you need the list of affected modules without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output all affected modules.
+
 ### 3. Publishing snapshots (CI)
 
 On feature branches, `publishSnapshot` detects changed modules and their transitive dependents, creates `.publish` markers, and publishes snapshot artifacts. It writes `target/changeset/snapshot-coordinates.json` with the published Maven coordinates.
@@ -89,7 +91,7 @@ After version bumps are committed:
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.1.0` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.2.0` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -109,7 +111,7 @@ jobs:
       - uses: actions/checkout@@v4
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.1.0
+        uses: alejandrohdezma/sbt-changesets@v0.2.0
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -136,7 +138,7 @@ Publishes snapshot artifacts for changed modules and posts a PR comment with the
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@@v4
-      - uses: alejandrohdezma/sbt-changesets@v0.1.0
+      - uses: alejandrohdezma/sbt-changesets@v0.2.0
         with:
           mode: snapshot
 ```
@@ -163,7 +165,7 @@ jobs:
       - uses: actions/checkout@@v4
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.1.0
+        uses: alejandrohdezma/sbt-changesets@v0.2.0
         with:
           mode: release
 
@@ -180,6 +182,7 @@ jobs:
 | `pr-number` | no | `github.event.pull_request.number` | PR number for snapshot comments |
 | `github-token` | no | `github.token` | GitHub token for API operations |
 | `error-help-url` | no | — | URL shown on changeset validation failure |
+| `skip-validation` | no | `false` | Skip changeset validation in `detect` mode while still computing affected modules |
 
 ### Outputs
 
