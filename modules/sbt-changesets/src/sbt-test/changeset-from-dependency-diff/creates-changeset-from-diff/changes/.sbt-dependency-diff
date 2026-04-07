@@ -1,0 +1,35 @@
+module-a {
+    added=[]
+    removed=[]
+    updated=[
+        {
+            from="3.12.2"
+            name="fs2-core_3"
+            organization="co.fs2"
+            to="3.13.0"
+        }
+    ]
+}
+module-b {
+    added=[
+        {
+            name="scala-java-time_3"
+            organization="io.github.cquiroz"
+            version="2.6.0"
+        }
+    ]
+    removed=[]
+    updated=[]
+}
+sbt-build {
+    added=[]
+    removed=[]
+    updated=[
+        {
+            from="1.12.6"
+            name=sbt
+            organization="org.scala-sbt"
+            to="1.12.8"
+        }
+    ]
+}

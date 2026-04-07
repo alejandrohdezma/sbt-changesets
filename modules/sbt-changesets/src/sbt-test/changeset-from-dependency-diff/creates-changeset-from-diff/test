@@ -1,0 +1,17 @@
+# Initialize git repo (required by the plugin)
+$ exec git init
+$ exec git config user.email "test@test.com"
+$ exec git config user.name "Test"
+$ exec git add .
+$ exec git commit --no-gpg-sign -m "Initial commit"
+
+# Copy the dependency diff file to the expected location
+$ mkdir target/sbt-dependencies
+$ copy-file changes/.sbt-dependency-diff target/sbt-dependencies/.sbt-dependency-diff
+
+# Run the command
+> changesetFromDependencyDiff
+
+# Verify changeset was created with expected contents
+$ exists .changeset/dependency-updates.md
+$ exec diff -u expected-changeset .changeset/dependency-updates.md
