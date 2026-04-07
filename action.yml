@@ -21,6 +21,10 @@ inputs:
     description: "URL to display on changeset validation failure (e.g. link to versioning docs)"
     required: false
     default: ""
+  skip-validation:
+    description: "Skip changeset validation in detect mode while still computing affected modules (default: false)"
+    required: false
+    default: "false"
 
 outputs:
   affected:
@@ -42,6 +46,8 @@ runs:
       if: inputs.mode == 'detect'
       id: detect
       shell: bash
+      env:
+        CHANGESET_SKIP_VALIDATION: ${{ inputs.skip-validation }}
       run: |
         sbt changesetAffected || {
           if [ -n "${{ inputs.error-help-url }}" ]; then

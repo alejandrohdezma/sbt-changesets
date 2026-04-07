@@ -1,5 +1,7 @@
 # Initialize git repo and create initial commit with all files
 $ exec git init
+$ exec git config user.email "test@test.com"
+$ exec git config user.name "Test"
 $ exec git add .
 $ exec git commit --no-gpg-sign -m "Initial commit"
 

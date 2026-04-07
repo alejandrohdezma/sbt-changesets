@@ -62,6 +62,8 @@ On pull requests, run `changesetStatus` to ensure every modified module has at l
 
 For CI matrix builds, `changesetAffected` does the same validation and writes `target/changeset/affected.json` — a JSON array of affected module names (including transitive dependents) that you can feed into a CI like GitHub Actions matrix.
 
+If you need the list of affected modules without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output all affected modules.
+
 ### 3. Publishing snapshots (CI)
 
 On feature branches, `publishSnapshot` detects changed modules and their transitive dependents, creates `.publish` markers, and publishes snapshot artifacts. It writes `target/changeset/snapshot-coordinates.json` with the published Maven coordinates.
@@ -180,6 +182,7 @@ jobs:
 | `pr-number` | no | `github.event.pull_request.number` | PR number for snapshot comments |
 | `github-token` | no | `github.token` | GitHub token for API operations |
 | `error-help-url` | no | — | URL shown on changeset validation failure |
+| `skip-validation` | no | `false` | Skip changeset validation in `detect` mode while still computing affected modules |
 
 ### Outputs
 
