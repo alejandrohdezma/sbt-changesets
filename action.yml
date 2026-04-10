@@ -108,46 +108,29 @@ runs:
 
     # ─── Release: version PR path ────────────────
 
-    - name: Apply changesets and create version PR
+    - name: Apply changesets
       if: inputs.mode == 'release' && steps.check.outputs.count != '0'
+      id: version
       shell: bash
       env:
         RELEASE: "true"
-        GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        BRANCH="changeset-release/main"
-
         sbt changesetVersion
 
-        # Build markdown PR body from version summary JSON
-        SUMMARY_FILE=$(mktemp)
+        echo "body<<EOF" >> "$GITHUB_OUTPUT"
         jq -r '"## Version Packages\n\n" + ([.[] | "- **\(.module)**: \(.old_version) → \(.new_version)"] | join("\n"))' \
-          target/changeset/version-summary.json > "$SUMMARY_FILE"
+          target/changeset/version-summary.json >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
 
-        # Configure git
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-        # Check for an existing open PR before force-pushing (force-pushing
-        # to a branch with a closed PR can cause GitHub to reopen it, which
-        # would make a post-push query find a stale PR).
-        EXISTING=$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number // empty' 2>/dev/null || echo "")
-
-        # Commit and force-push
-        git checkout -B "$BRANCH"
-        git add -A
-        git commit -m "Version Packages [skip ci]" || { echo "No changes to commit."; exit 0; }
-        git push --force origin "$BRANCH"
-
-        # Create or update PR
-        if [ -n "$EXISTING" ]; then
-          gh pr edit "$EXISTING" --body-file "$SUMMARY_FILE"
-          echo "Updated PR #$EXISTING"
-        else
-          gh pr create --head "$BRANCH" --base main --title "Changesets: Version Packages" --body-file "$SUMMARY_FILE"
-        fi
-
-        rm -f "$SUMMARY_FILE"
+    - name: Create version PR
+      if: inputs.mode == 'release' && steps.check.outputs.count != '0'
+      uses: alejandrohdezma/actions/upsert-pr@v1
+      with:
+        branch: changeset-release/main
+        title: "Changesets: Version Packages"
+        message: "Version Packages [skip ci]"
+        body: ${{ steps.version.outputs.body }}
+        github-token: ${{ inputs.github-token }}
 
     # ─── Release: publish + releases path ────────
 
