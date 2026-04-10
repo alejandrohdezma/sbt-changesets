@@ -112,6 +112,7 @@ runs:
       if: inputs.mode == 'release' && steps.check.outputs.count != '0'
       shell: bash
       env:
+        RELEASE: "true"
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         BRANCH="changeset-release/main"
