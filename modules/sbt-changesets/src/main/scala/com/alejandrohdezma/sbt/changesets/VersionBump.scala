@@ -19,9 +19,9 @@ package com.alejandrohdezma.sbt.changesets
 /** A semver version bump level. */
 sealed trait VersionBump {
 
-  /** Applies this bump to a version string. */
+  /** Applies this bump to a version string. Strips any pre-release suffix (e.g. `-SNAPSHOT`) before parsing. */
   def apply(current: String): String = {
-    val parts = current.split("\\.").map(_.toInt)
+    val parts = VersionBump.semverParts(current)
 
     this match {
       case VersionBump.Major => s"${parts(0) + 1}.0.0"
@@ -43,8 +43,8 @@ sealed trait VersionBump {
     * If the dependency's bump is non-breaking, returns `Patch`.
     */
   def cascadeBump(depVersion: String, dependentVersion: String): VersionBump = {
-    val depMajor       = depVersion.split("\\.")(0).toInt
-    val dependentMajor = dependentVersion.split("\\.")(0).toInt
+    val depMajor       = VersionBump.semverParts(depVersion)(0)
+    val dependentMajor = VersionBump.semverParts(dependentVersion)(0)
 
     val isBreaking =
       (depMajor == 0 && (this == VersionBump.Minor || this == VersionBump.Major)) ||
@@ -75,6 +75,10 @@ object VersionBump {
   case object Minor extends VersionBump { override def toString: String = "minor" }
 
   case object Patch extends VersionBump { override def toString: String = "patch" }
+
+  /** Parses the numeric semver parts from a version string, stripping any pre-release suffix (e.g. `-SNAPSHOT`). */
+  private[changesets] def semverParts(version: String): Array[Int] =
+    version.split("-", 2)(0).split("\\.").map(_.toInt)
 
   /** Extracts a bump type from a string (`"major"`, `"minor"`, or `"patch"`). */
   def unapply(value: String): Option[VersionBump] = value match {
