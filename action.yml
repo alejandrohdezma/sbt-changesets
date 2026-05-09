@@ -7,7 +7,7 @@ branding:
 
 inputs:
   mode:
-    description: "'detect' to validate changesets and output affected modules, 'snapshot' for PR snapshots, 'release' for main branch publishing"
+    description: "'detect' to validate changesets and output affected modules and pending changeset count, 'snapshot' for PR snapshots, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'prepare-release' to compute the per-module publish matrix"
     required: true
   pr-number:
     description: "PR number for snapshot comment (defaults to github.event.pull_request.number)"
@@ -25,22 +25,31 @@ inputs:
     description: "Skip changeset validation in detect mode while still computing affected modules (default: false)"
     required: false
     default: "false"
+  extra-command:
+    description: "Optional sbt command(s) to chain after `changesetVersion` in 'apply-changesets' mode. Useful for regenerating doc files (e.g. `documentation/mdoc`) so they get committed as part of the version PR. Use `;` to chain multiple commands."
+    required: false
+    default: ""
 
 outputs:
   affected:
     description: "JSON array of affected module names (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.affected }}
-  result:
-    description: "'version-pr' if a version PR was created/updated, 'published' if artifacts were published, 'no-changes' otherwise"
-    value: ${{ steps.release-result.outputs.result }}
-  branch:
-    description: "The release branch name (only set when result is 'version-pr')"
-    value: ${{ steps.release-result.outputs.branch }}
+  changesets-count:
+    description: "Number of pending .changeset/*.md files (only set when mode is 'detect')"
+    value: ${{ steps.detect.outputs.changesets-count }}
+  matrix:
+    description: "JSON string array of module names for matrix publishing (only set when mode is 'prepare-release')"
+    value: ${{ steps.matrix.outputs.matrix }}
 
 runs:
   using: composite
   steps:
     # ─── Detect mode ─────────────────────────────
+    # Validates that every changed module has a corresponding .changeset/*.md entry,
+    # then emits the affected modules (changed + transitive dependents) as JSON and
+    # the count of pending changeset files.
+    # Run on pull requests to gate the test matrix and on push to main to dispatch
+    # between the `apply-changesets` and `prepare-release` modes.
 
     - name: Detect affected modules
       if: inputs.mode == 'detect'
@@ -57,7 +66,14 @@ runs:
         }
         echo "affected=$(jq -c . target/changeset/affected.json)" >> "$GITHUB_OUTPUT"
 
+        COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
+        echo "changesets-count=$COUNT" >> "$GITHUB_OUTPUT"
+
     # ─── Snapshot mode ───────────────────────────
+    # Publishes timestamped SNAPSHOT artifacts for affected modules and upserts a
+    # PR comment with the Maven coordinates so reviewers can try the changes.
+    # Run on pull requests after tests pass; intended for private monorepos only
+    # (publishing credentials would otherwise leak on public PRs).
 
     - name: Publish snapshots
       if: inputs.mode == 'snapshot'
@@ -96,26 +112,24 @@ runs:
 
         rm -f "$BODY_FILE"
 
-    # ─── Release mode ────────────────────────────
-
-    - name: Check for pending changesets
-      if: inputs.mode == 'release'
-      id: check
-      shell: bash
-      run: |
-        COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
-        echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-
-    # ─── Release: version PR path ────────────────
+    # ─── Apply-changesets ────────────────────────
+    # Bumps VERSION files (via `changesetVersion`) and upserts the
+    # "Version Packages" pull request on the `changeset-release/main` branch.
+    # Run after a developer's PR carrying changeset files is merged to main.
 
     - name: Apply changesets
-      if: inputs.mode == 'release' && steps.check.outputs.count != '0'
-      id: version
+      if: inputs.mode == 'apply-changesets'
+      id: apply-changesets
       shell: bash
       env:
         RELEASE: "true"
+        EXTRA_COMMAND: ${{ inputs.extra-command }}
       run: |
-        sbt changesetVersion
+        if [ -n "$EXTRA_COMMAND" ]; then
+          sbt "changesetVersion; $EXTRA_COMMAND"
+        else
+          sbt changesetVersion
+        fi
 
         echo "body<<EOF" >> "$GITHUB_OUTPUT"
         jq -r '"## Version Packages\n\n" + ([.[] | "- **\(.module)**: \(.old_version) → \(.new_version)"] | join("\n"))' \
@@ -123,55 +137,24 @@ runs:
         echo "EOF" >> "$GITHUB_OUTPUT"
 
     - name: Create version PR
-      if: inputs.mode == 'release' && steps.check.outputs.count != '0'
+      if: inputs.mode == 'apply-changesets'
       uses: alejandrohdezma/actions/upsert-pr@v1
       with:
         branch: changeset-release/main
         title: "Changesets: Version Packages"
         message: "Version Packages [skip ci]"
-        body: ${{ steps.version.outputs.body }}
+        body: ${{ steps.apply-changesets.outputs.body }}
         github-token: ${{ inputs.github-token }}
 
-    # ─── Release: publish + releases path ────────
+    # ─── Prepare-release ─────────────────────────
+    # Emits a JSON array of module names whose VERSION changed in the last
+    # commit, suitable for a downstream matrix publish job.
+    # Run after the "Version Packages" PR is merged to main.
 
-    - name: Publish and create releases
-      if: inputs.mode == 'release' && steps.check.outputs.count == '0'
-      shell: bash
-      env:
-        RELEASE: "true"
-        GH_TOKEN: ${{ inputs.github-token }}
-      run: |
-        sbt "generatePublishMarkers; +publish; changesetRelease"
-
-        RELEASE_FILE="target/changeset/release.json"
-
-        if [ ! -f "$RELEASE_FILE" ]; then
-          echo "No release file found. Skipping release creation."
-          exit 0
-        fi
-
-        jq -c '.[]' "$RELEASE_FILE" | while read -r release; do
-          TAG=$(echo "$release" | jq -r '.tag')
-          BODY=$(echo "$release" | jq -r '.body')
-          NOTES_FILE=$(mktemp)
-          echo "$BODY" > "$NOTES_FILE"
-
-          echo "Creating release: $TAG"
-          gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --target main
-
-          rm -f "$NOTES_FILE"
-        done
-
-    # ─── Release: set outputs ────────────────────
-
-    - name: Set release outputs
-      if: inputs.mode == 'release'
-      id: release-result
+    - name: Compute publish matrix
+      if: inputs.mode == 'prepare-release'
+      id: matrix
       shell: bash
       run: |
-        if [ "${{ steps.check.outputs.count }}" != "0" ]; then
-          echo "result=version-pr" >> "$GITHUB_OUTPUT"
-          echo "branch=changeset-release/main" >> "$GITHUB_OUTPUT"
-        else
-          echo "result=published" >> "$GITHUB_OUTPUT"
-        fi
+        sbt changesetMatrix
+        echo "matrix=$(jq -c . target/changeset/matrix.json)" >> "$GITHUB_OUTPUT"

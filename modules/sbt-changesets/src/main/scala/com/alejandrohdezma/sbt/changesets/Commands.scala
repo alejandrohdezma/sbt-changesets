@@ -84,45 +84,11 @@ object Commands {
     state
   }
 
-  val changesetStatus: Command = Command.command(
-    "changesetStatus",
-    "Validates that changeset files exist for all changed modules.",
-    """|Compares changed files against the base branch and checks that every modified
-       |module has a corresponding entry in a .changeset/*.md file.
-       |
-       |Fails the build if any modules are missing changeset entries.""".stripMargin
-  ) { state =>
-    val base = Project.extract(state).get(ThisBuild / baseDirectory)
-
-    val changed = changedModules(state)
-
-    if (changed.isEmpty) state.log.info("No modules changed.")
-    else {
-      val moduleNames = extractModuleNames(state)
-      val changesets  = parseAndValidate(base / ".changeset", moduleNames, state.log)
-
-      val missing = changed.diff(changesets.keys)
-      if (missing.nonEmpty) {
-        missing.toList.sorted.foreach(m => state.log.error(s"Missing changeset entry for: ${Colors.module(m)}"))
-        throw new MessageOnlyException(s"Missing changeset entries for ${missing.size} modified module(s).")
-      } else state.log.info(s"Changeset entries found for: ${changed.toList.sorted.map(Colors.module).mkString(", ")}")
-
-      changesets.validateDescriptions match {
-        case Left(errors) =>
-          errors.foreach(e => state.log.error(e))
-          throw new MessageOnlyException(s"${errors.size} changeset(s) still have the template description.")
-        case Right(_) => ()
-      }
-    }
-
-    state
-  }
-
   val changesetAffected: Command = Command.command(
     "changesetAffected",
     "Validates changesets and outputs affected module names as JSON.",
-    """|First validates that all changed modules have changeset entries (same as
-       |changesetStatus). Then writes a JSON array to target/changeset/affected.json
+    """|First validates that every changed module has a corresponding entry in a
+       |.changeset/*.md file. Then writes a JSON array to target/changeset/affected.json
        |containing the names of all modules that have changed files (compared to
        |the base branch) plus their transitive dependents in the internal dependency
        |graph.
@@ -224,69 +190,75 @@ object Commands {
     state
   }
 
-  val changesetRelease: Command = Command.command(
-    "changesetRelease",
-    "Outputs release info for modules with .publish markers.",
-    """|Reads .publish marker files under modules/*/ and writes
-       |target/changeset/release.json with tag names and changelog bodies.
+  val extractLatestChangelog: Command = Command.single(
+    "extractLatestChangelog",
+    "extractLatestChangelog" -> "Extracts a single module's CHANGELOG body for its current VERSION.",
+    """|Reads `modules/<module>/VERSION`, finds the matching `## <version>` entry in
+       |`modules/<module>/CHANGELOG.md`, and writes its body to
+       |`target/changeset/changelog.md`.
        |
-       |JSON format:
-       |  [
-       |    { "module": "my-module", "version": "1.3.0", "tag": "my-module@1.3.0", "body": "..." }
-       |  ]""".stripMargin
-  ) { state =>
+       |Intended for the per-module matrix release flow: each cell calls this and
+       |feeds the file into `gh release create --notes-file`.""".stripMargin
+  ) { (state, name) =>
     val base = Project.extract(state).get(ThisBuild / baseDirectory)
+    val dir  = base / "modules" / name
 
-    val modulesDir = base / "modules"
+    if (!dir.isDirectory) {
+      state.log.error(s"Module directory not found for ${Colors.module(name)}: ${Colors.path(dir)}")
+      throw new MessageOnlyException(s"Module directory not found: ${dir.getAbsolutePath}")
+    }
 
-    val releases = Option(modulesDir.listFiles())
-      .fold(List.empty[java.io.File])(_.toList)
-      .sorted
-      .filter(dir => dir.isDirectory && (dir / ".publish").exists())
-      .map { dir =>
-        val name    = dir.getName
-        val version = IO.read(dir / "VERSION").trim
-        val tag     = s"$name@$version"
-        val body    = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", version)
+    val versionFile = dir / "VERSION"
+    if (!versionFile.exists()) {
+      state.log.error(s"Missing VERSION file for ${Colors.module(name)}: ${Colors.path(versionFile)}")
+      throw new MessageOnlyException(
+        s"Missing VERSION file for module '$name' at ${versionFile.getAbsolutePath}"
+      )
+    }
 
-        state.log.info(s"Release: ${Colors.module(name)}@${Colors.version(version)}")
+    val version = IO.read(versionFile).trim
+    val body    = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", version)
 
-        Json.obj("module" := name, "version" := version, "tag" := tag, "body" := body)
-      }
+    val file = base / "target" / "changeset" / "changelog.md"
+    IO.write(file, body)
 
-    val file = base / "target" / "changeset" / "release.json"
-    IO.write(file, Json.arr(releases: _*)(DummyImplicit.dummyImplicit).show())
-    state.log.info(s"Wrote release info to ${Colors.path(file)}")
+    state.log.info {
+      s"Extracted changelog for ${Colors.module(name)}@${Colors.version(version)} -> ${Colors.path(file)}"
+    }
 
     state
   }
 
-  val generatePublishMarkers: Command = Command.command(
-    "generatePublishMarkers",
-    "Creates .publish markers for modules whose VERSION file changed in the last commit.",
-    """|Detects which modules need publishing by running git diff on the last
-       |commit. For each module whose VERSION file was modified, creates an
-       |empty .publish marker file so that `publish / skip` evaluates to false.
+  val changesetMatrix: Command = Command.command(
+    "changesetMatrix",
+    "Outputs JSON array of module names whose VERSION changed in the last commit.",
+    """|Detects which modules need publishing by running git diff on the last commit
+       |and writes a JSON string array to target/changeset/matrix.json containing
+       |the names of every module whose VERSION file was modified.
        |
-       |Intended to run in CI before `+publish` so that markers are local to
-       |the runner and never committed to the repository.""".stripMargin
+       |Suitable as input for a GitHub Actions matrix strategy where each cell runs
+       |`sbt "+<module>/publish"` to cross-build the module internally.""".stripMargin
   ) { state =>
     val base = Project.extract(state).get(ThisBuild / baseDirectory)
 
     val diff = Process(Seq("git", "diff", "--name-only", "HEAD~1", "--", "modules/*/VERSION"), base).!!.trim
 
-    val modules = diff.linesIterator
+    val changed = diff.linesIterator
       .filter(_.startsWith("modules/"))
       .flatMap(_.stripPrefix("modules/").split("/").headOption)
       .toSet
 
-    if (modules.isEmpty) state.log.info("No VERSION files changed in last commit. No markers created.")
-    else {
-      modules.toList.sorted.foreach { name =>
-        IO.write(base / "modules" / name / ".publish", "")
-        state.log.info(s"Created .publish marker for ${Colors.module(name)}")
-      }
-    }
+    val moduleNames = extractModuleNames(state)
+
+    val rows = changed.intersect(moduleNames).toList.sorted
+
+    val json = Json.arr(rows: _*)
+
+    val file = base / "target" / "changeset" / "matrix.json"
+
+    IO.write(file, json.show())
+
+    state.log.info(s"Wrote publish matrix to ${Colors.path(file)}")
 
     state
   }
@@ -452,8 +424,8 @@ object Commands {
     }
   }
 
-  val all: Seq[Command] = Seq(changesetConfig, changesetStatus, changesetAffected, changesetVersion, changesetRelease,
-    generatePublishMarkers, publishSnapshot, changesetAdd, changesetFromDependencyDiff)
+  val all: Seq[Command] = Seq(changesetConfig, changesetAffected, changesetVersion, extractLatestChangelog,
+    changesetMatrix, publishSnapshot, changesetAdd, changesetFromDependencyDiff)
 
   // ─── Internal helpers ─────────────────────────
 
