@@ -28,8 +28,8 @@ Each module in your build has a `VERSION` file and a `CHANGELOG.md`. Instead of 
 | `changesetAffected` | Validate + output affected modules as JSON |
 | `changesetVersion` | Apply version bumps with cascade through dependency graph |
 | `extractLatestChangelog <module>` | Extract a single module's CHANGELOG body for its current `VERSION` |
+| `extractSnapshotCoordinates <module>...` | Output JSON of resolved snapshot coordinates for the given modules |
 | `changesetMatrix` | Output JSON array of module names whose VERSION changed in last commit |
-| `publishSnapshot` | Publish snapshots for changed modules |
 | `changesetConfig` | Output module dependency graph as JSON |
 
 </details>
@@ -63,7 +63,9 @@ If you need the list of affected modules without requiring changeset entries (e.
 
 ### 3. Publishing snapshots (CI)
 
-On feature branches, `publishSnapshot` detects changed modules and their transitive dependents, creates `.publish` markers, and publishes snapshot artifacts. It writes `target/changeset/snapshot-coordinates.json` with the published Maven coordinates.
+On feature branches, the affected modules from `changesetAffected` feed a CI matrix that publishes each module's snapshot in parallel via `sbt "+<module>/publish"`. The version is the default `<base>-<suffix>-SNAPSHOT` from the module's `VERSION` file (suffix from `SNAPSHOT_SUFFIX` env / sys-prop, else a memoised JVM timestamp).
+
+A follow-up job runs `extractSnapshotCoordinates <m1> <m2> ...` to resolve each module's `organization` and snapshot version, write `target/changeset/snapshot-coordinates.json`, and post a PR comment listing the Maven coordinates.
 
 ### 4. Applying version bumps (CI)
 
@@ -80,7 +82,7 @@ Modules that are only bumped through cascade get auto-generated descriptions lis
 
 ### 5. Publishing releases (CI)
 
-After version bumps are committed, `changesetMatrix` writes `target/changeset/matrix.json` — a JSON string array of changed module names — which feeds a CI matrix that publishes each module on its own runner in parallel. Each cell `touch`es the module's `.publish` marker (so `Settings.skipPublish` lets it through), runs `sbt "+<module>/publish"`, then `extractLatestChangelog <module>` writes the relevant CHANGELOG body that the cell uses as the GitHub release notes.
+After version bumps are committed, `changesetMatrix` writes `target/changeset/matrix.json` — a JSON string array of changed module names — which feeds a CI matrix that publishes each module on its own runner in parallel. Each cell runs `sbt "+<module>/publish"`, then `extractLatestChangelog <module>` writes the relevant CHANGELOG body that the cell uses as the GitHub release notes.
 
 The composite [GitHub Action](#github-actions) bundles this flow as the `prepare-release` mode (the consumer just adds the matrix job).
 
@@ -104,9 +106,12 @@ on:
 jobs:
   detect:
     runs-on: ubuntu-latest
+    env:
+      SNAPSHOT_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
     outputs:
       affected: ${{ steps.changesets.outputs.affected }}
       changesets-count: ${{ steps.changesets.outputs.changesets-count }}
+      coordinates: ${{ steps.coordinates.outputs.json }}
     steps:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
@@ -117,36 +122,58 @@ jobs:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
 
-  test:
+      - id: coordinates
+        if: github.event_name == 'pull_request' && steps.changesets.outputs.affected != '[]'
+        env:
+          AFFECTED: ${{ steps.changesets.outputs.affected }}
+        run: |
+          MODULES=$(echo "$AFFECTED" | jq -r '.[]' | tr '\n' ' ')
+          sbt "extractSnapshotCoordinates $MODULES"
+          echo "json=$(jq -c . target/changeset/snapshot-coordinates.json)" >> "$GITHUB_OUTPUT"
+
+  validate:
     needs: detect
     if: github.event_name == 'pull_request' && needs.detect.outputs.affected != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         module: ${{ fromJson(needs.detect.outputs.affected) }}
+    env:
+      SNAPSHOT_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@@v4
 
       - run: sbt "+${{ matrix.module }}/test"
-```
 
-### `snapshot` mode
+      - run: sbt "+${{ matrix.module }}/publish"
 
-Publishes snapshot artifacts for changed modules and posts a PR comment with the Maven coordinates. Use this on pull requests after tests pass so reviewers can try the changes.
-
-```yaml
-  snapshot:
-    needs: [detect, test]
+  snapshot-comment:
+    needs: [detect, validate]
+    if: github.event_name == 'pull_request' && needs.detect.outputs.affected != '[]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@@v4
-
       - uses: alejandrohdezma/sbt-changesets@AT_VERSION@
         with:
-          mode: snapshot
+          mode: snapshot-comment
+          coordinates: ${{ needs.detect.outputs.coordinates }}
 ```
 
-> **Note:** This is intended for private monorepos only. Exposing publishing credentials on pull requests in public repositories is a security risk.
+`SNAPSHOT_SUFFIX` (e.g. `${{ github.run_id }}-${{ github.run_attempt }}`) is set on both `detect` and `validate` so the coordinates resolved up-front in `detect` match the artifacts published by the `validate` matrix. `extractSnapshotCoordinates` reads each module's `organization` from the build, so per-module org overrides (e.g. `com.permutive.metrics`) are respected without any consumer-side hardcoding. Snapshot publishes are intended for private monorepos only — exposing publishing credentials on PRs in public repositories is a security risk.
+
+### `snapshot-comment` mode
+
+Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix snapshot publish. Pass the JSON output of `extractSnapshotCoordinates` (typically computed once in the `detect` job and surfaced via `needs.detect.outputs.coordinates`).
+
+```yaml
+  snapshot-comment:
+    needs: [detect, validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: alejandrohdezma/sbt-changesets@AT_VERSION@
+        with:
+          mode: snapshot-comment
+          coordinates: ${{ needs.detect.outputs.coordinates }}
+```
 
 ### `apply-changesets` mode
 
@@ -209,9 +236,6 @@ jobs:
     steps:
       - uses: actions/checkout@@v4
 
-      - name: Touch .publish marker
-        run: touch modules/${{ matrix.module }}/.publish
-
       - name: Publish and extract changelog
         run: sbt "+${{ matrix.module }}/publish; extractLatestChangelog ${{ matrix.module }}"
 
@@ -231,12 +255,13 @@ jobs:
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `mode` | yes | — | `detect`, `snapshot`, `apply-changesets`, or `prepare-release` |
-| `pr-number` | no | `github.event.pull_request.number` | PR number for snapshot comments |
+| `mode` | yes | — | `detect`, `apply-changesets`, `prepare-release`, or `snapshot-comment` |
 | `github-token` | no | `github.token` | GitHub token for API operations |
 | `error-help-url` | no | — | URL shown on changeset validation failure |
 | `skip-validation` | no | `false` | Skip changeset validation in `detect` mode while still computing affected modules |
 | `extra-command` | no | — | sbt command(s) chained after `changesetVersion` in `apply-changesets` mode (e.g. `documentation/mdoc`) |
+| `coordinates` | no | — | JSON array of snapshot coordinates consumed by `snapshot-comment` mode |
+| `pr-number` | no | `github.event.pull_request.number` | PR number to comment on in `snapshot-comment` mode |
 
 ### Outputs
 

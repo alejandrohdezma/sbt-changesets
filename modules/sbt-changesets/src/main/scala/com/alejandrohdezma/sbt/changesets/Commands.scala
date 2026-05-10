@@ -263,64 +263,59 @@ object Commands {
     state
   }
 
-  val publishSnapshot: Command = Command.command(
-    "publishSnapshot",
-    "Publishes affected modules as snapshots.",
-    """|Detects which modules have changed (compared to the base branch), computes
-       |transitive dependents, enables publishing for those modules, and runs
-       |+publish. Writes snapshot coordinates to target/changeset/snapshot-coordinates.json.
+  val extractSnapshotCoordinates: Command = Command.args(
+    "extractSnapshotCoordinates",
+    "extractSnapshotCoordinates" -> "Outputs JSON of resolved snapshot coordinates for the given modules.",
+    """|Resolves each module's organization and snapshot version, and writes
+       |`target/changeset/snapshot-coordinates.json` — a JSON array whose
+       |elements have the shape `{module, version, coordinate}`.
        |
-       |The version is the default timestamp-SNAPSHOT version (from VERSION file).
-       |Non-affected modules remain skipped.""".stripMargin
-  ) { state =>
+       |The version honours the `SNAPSHOT_SUFFIX` env var (or system property of
+       |the same name); when neither is set, falls back to a JVM-memoised
+       |timestamp.
+       |
+       |Intended to feed the `snapshot-comment` action mode after a matrix
+       |snapshot publish.""".stripMargin,
+    "<module-name> [<module-name>...]"
+  ) { (state, args) =>
+    if (args.isEmpty) {
+      val msg = "Usage: extractSnapshotCoordinates <module-name> [<module-name>...]"
+      state.log.error(msg)
+      throw new MessageOnlyException(msg)
+    }
+
     val extracted = Project.extract(state)
     val base      = extracted.get(ThisBuild / baseDirectory)
-    val modules   = ModuleMetadata.from(state)
-    val changed   = changedModules(state)
 
-    if (changed.isEmpty) {
-      state.log.info("No modules changed. Nothing to publish.")
-      state
-    } else {
-      val affected = changed ++ changed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
+    val refsByName = extracted.structure.allProjectRefs
+      .filter(ref => extracted.get(ref / packageIsModule))
+      .map(ref => extracted.get(ref / Keys.name) -> ref)
+      .toMap
 
-      state.log.info(s"Affected modules: ${affected.toList.sorted.map(Colors.module).mkString(", ")}")
-
-      // Build project ref lookup: module name -> project ref
-      val moduleRefsByName = extracted.structure.allProjectRefs
-        .filter(ref => extracted.get(ref / packageIsModule))
-        .map(ref => extracted.get(ref / Keys.name) -> ref)
-        .toMap
-
-      // Create .publish marker files for affected modules so that
-      // `publish / skip` evaluates to false even after `+` reapplies settings.
-      affected.toList.sorted.foreach { name =>
-        moduleRefsByName.get(name).foreach { ref =>
-          IO.touch(extracted.get(ref / Keys.baseDirectory) / ".publish")
-        }
-      }
-
-      // Write coordinates JSON (version includes timestamp-SNAPSHOT by default)
-      val coordinates = affected.toList.sorted.flatMap { name =>
-        moduleRefsByName.get(name).map { ref =>
-          val moduleVersion = extracted.get(ref / version)
-          val moduleOrg     = extracted.get(ref / organization)
-
-          Json.obj(
-            "module"     := name,
-            "version"    := moduleVersion,
-            "coordinate" := s""""$moduleOrg" %% "$name" % "$moduleVersion""""
-          )
-        }
-      }
-
-      val coordinatesFile = base / "target" / "changeset" / "snapshot-coordinates.json"
-      IO.write(coordinatesFile, Json.arr(coordinates: _*)(DummyImplicit.dummyImplicit).show())
-      state.log.info(s"Wrote snapshot coordinates to ${Colors.path(coordinatesFile)}")
-
-      // Reload to pick up .publish markers, then run +publish
-      "reload" :: "+publish" :: state
+    val unknown = args.filterNot(refsByName.contains)
+    if (unknown.nonEmpty) {
+      unknown.foreach(name => state.log.error(s"Module not found: ${Colors.module(name)}"))
+      throw new MessageOnlyException(s"${unknown.size} unknown module(s)")
     }
+
+    val coordinates = args.sorted.map { name =>
+      val ref = refsByName(name)
+      val org = extracted.get(ref / organization)
+      val ver = extracted.get(ref / version)
+
+      Json.obj(
+        "module"     := name,
+        "version"    := ver,
+        "coordinate" := s""""$org" %% "$name" % "$ver""""
+      )
+    }
+
+    val file = base / "target" / "changeset" / "snapshot-coordinates.json"
+    IO.write(file, Json.arr(coordinates: _*)(DummyImplicit.dummyImplicit).show())
+
+    state.log.info(s"Wrote snapshot coordinates to ${Colors.path(file)}")
+
+    state
   }
 
   val changesetAdd: Command = Command.args(
@@ -425,7 +420,7 @@ object Commands {
   }
 
   val all: Seq[Command] = Seq(changesetConfig, changesetAffected, changesetVersion, extractLatestChangelog,
-    changesetMatrix, publishSnapshot, changesetAdd, changesetFromDependencyDiff)
+    extractSnapshotCoordinates, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
 
   // ─── Internal helpers ─────────────────────────
 

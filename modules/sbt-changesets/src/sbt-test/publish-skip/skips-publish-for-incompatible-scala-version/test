@@ -1,17 +1,9 @@
-# Without .publish markers, both modules should skip publishing
-> cross-module/assertSkipped
-> scala3-only-module/assertSkipped
-
-# Create .publish markers for both modules
-$ touch modules/cross-module/.publish
-$ touch modules/scala3-only-module/.publish
-
-# After ++ 2.13.18: cross-module should publish, scala3-only-module should skip
+# After ++ 2.13.18: cross-module supports both versions; scala3-only-module skips.
 > ++ 2.13.18
 > cross-module/assertNotSkipped
 > scala3-only-module/assertSkipped
 
-# After ++ 3.3.7: both should publish
+# After ++ 3.3.7: both support 3.3.7 and publish.
 > ++ 3.3.7
 > cross-module/assertNotSkipped
 > scala3-only-module/assertNotSkipped

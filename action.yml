@@ -1,5 +1,5 @@
 name: sbt-changesets
-description: Changeset-based versioning for Scala multi-module builds. Detect affected modules, publish snapshots, and release.
+description: Changeset-based versioning for Scala multi-module builds. Detect affected modules, apply changesets, and prepare releases.
 
 branding:
   icon: package
@@ -7,12 +7,8 @@ branding:
 
 inputs:
   mode:
-    description: "'detect' to validate changesets and output affected modules and pending changeset count, 'snapshot' for PR snapshots, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'prepare-release' to compute the per-module publish matrix"
+    description: "'detect' to validate changesets and output affected modules and pending changeset count, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'prepare-release' to compute the per-module publish matrix, 'snapshot-comment' to post a PR comment listing snapshot coordinates"
     required: true
-  pr-number:
-    description: "PR number for snapshot comment (defaults to github.event.pull_request.number)"
-    required: false
-    default: ${{ github.event.pull_request.number }}
   github-token:
     description: "GitHub token for API operations (defaults to github.token)"
     required: false
@@ -29,6 +25,14 @@ inputs:
     description: "Optional sbt command(s) to chain after `changesetVersion` in 'apply-changesets' mode. Useful for regenerating doc files (e.g. `documentation/mdoc`) so they get committed as part of the version PR. Use `;` to chain multiple commands."
     required: false
     default: ""
+  coordinates:
+    description: "JSON array of snapshot coordinates as produced by `extractSnapshotCoordinates` (only used in 'snapshot-comment' mode). Each element should be `{module, version, coordinate}`."
+    required: false
+    default: ""
+  pr-number:
+    description: "PR number to comment on in 'snapshot-comment' mode (defaults to github.event.pull_request.number)"
+    required: false
+    default: ${{ github.event.pull_request.number }}
 
 outputs:
   affected:
@@ -37,6 +41,9 @@ outputs:
   changesets-count:
     description: "Number of pending .changeset/*.md files (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.changesets-count }}
+  coordinates:
+    description: "JSON array of resolved snapshot coordinates for the affected modules (only set when mode is 'detect'; uses SNAPSHOT_SUFFIX env var if set)"
+    value: ${{ steps.detect.outputs.coordinates }}
   matrix:
     description: "JSON string array of module names for matrix publishing (only set when mode is 'prepare-release')"
     value: ${{ steps.matrix.outputs.matrix }}
@@ -46,10 +53,12 @@ runs:
   steps:
     # ─── Detect mode ─────────────────────────────
     # Validates that every changed module has a corresponding .changeset/*.md entry,
-    # then emits the affected modules (changed + transitive dependents) as JSON and
-    # the count of pending changeset files.
-    # Run on pull requests to gate the test matrix and on push to main to dispatch
-    # between the `apply-changesets` and `prepare-release` modes.
+    # then emits the affected modules (changed + transitive dependents), the count of
+    # pending changeset files, and resolved snapshot coordinates (uses the
+    # SNAPSHOT_SUFFIX env var when set; otherwise a memoised JVM timestamp).
+    # Run on pull requests to gate the test matrix, on push to main to dispatch
+    # between `apply-changesets` and `prepare-release`, and to feed the
+    # `snapshot-comment` mode with pre-resolved coordinates.
 
     - name: Detect affected modules
       if: inputs.mode == 'detect'
@@ -64,53 +73,17 @@ runs:
           fi
           exit 1
         }
-        echo "affected=$(jq -c . target/changeset/affected.json)" >> "$GITHUB_OUTPUT"
+        AFFECTED=$(jq -c . target/changeset/affected.json)
+        echo "affected=$AFFECTED" >> "$GITHUB_OUTPUT"
+
+        if [ "$AFFECTED" != "[]" ]; then
+          MODULES=$(echo "$AFFECTED" | jq -r '.[]' | tr '\n' ' ')
+          sbt "extractSnapshotCoordinates $MODULES"
+          echo "coordinates=$(jq -c . target/changeset/snapshot-coordinates.json)" >> "$GITHUB_OUTPUT"
+        fi
 
         COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
         echo "changesets-count=$COUNT" >> "$GITHUB_OUTPUT"
-
-    # ─── Snapshot mode ───────────────────────────
-    # Publishes timestamped SNAPSHOT artifacts for affected modules and upserts a
-    # PR comment with the Maven coordinates so reviewers can try the changes.
-    # Run on pull requests after tests pass; intended for private monorepos only
-    # (publishing credentials would otherwise leak on public PRs).
-
-    - name: Publish snapshots
-      if: inputs.mode == 'snapshot'
-      shell: bash
-      run: sbt publishSnapshot
-
-    - name: Comment snapshot coordinates on PR
-      if: inputs.mode == 'snapshot'
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-      run: |
-        COORDINATES_FILE="target/changeset/snapshot-coordinates.json"
-
-        if [ ! -f "$COORDINATES_FILE" ]; then
-          echo "No snapshot coordinates file found. Skipping comment."
-          exit 0
-        fi
-
-        BLOCKS=$(jq -r '.[] | "```scala\n\(.coordinate)\n```"' "$COORDINATES_FILE")
-        BODY_FILE=$(mktemp)
-
-        cat > "$BODY_FILE" <<EOF
-        ### Snapshot releases
-
-        Install with:
-
-        ${BLOCKS}
-
-        _Updated on each push to this PR._
-        EOF
-
-        # Try to update the last bot comment, fall back to creating a new one
-        gh pr comment "${{ inputs.pr-number }}" --edit-last --body-file "$BODY_FILE" 2>/dev/null \
-          || gh pr comment "${{ inputs.pr-number }}" --body-file "$BODY_FILE"
-
-        rm -f "$BODY_FILE"
 
     # ─── Apply-changesets ────────────────────────
     # Bumps VERSION files (via `changesetVersion`) and upserts the
@@ -158,3 +131,31 @@ runs:
       run: |
         sbt changesetMatrix
         echo "matrix=$(jq -c . target/changeset/matrix.json)" >> "$GITHUB_OUTPUT"
+
+    # ─── Snapshot-comment ────────────────────────
+    # Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix
+    # snapshot publish. The `coordinates` input is the JSON output of
+    # `extractSnapshotCoordinates`; typically computed once in the same job that runs
+    # the action's `detect` mode and surfaced via `needs.<detect-job>.outputs.coordinates`.
+
+    - name: Post snapshot coordinates comment
+      if: inputs.mode == 'snapshot-comment'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        COORDINATES: ${{ inputs.coordinates }}
+      run: |
+        BLOCKS=$(echo "$COORDINATES" | jq -r '.[] | "```scala\n\(.coordinate)\n```"')
+        BODY_FILE=$(mktemp)
+        cat > "$BODY_FILE" <<EOF
+        ### Snapshot releases
+
+        Install with:
+        ${BLOCKS}
+
+        _Updated on each push to this PR._
+        EOF
+        gh pr comment "$PR_NUMBER" --edit-last --body-file "$BODY_FILE" 2>/dev/null \
+          || gh pr comment "$PR_NUMBER" --body-file "$BODY_FILE"
+        rm -f "$BODY_FILE"

@@ -14,5 +14,6 @@ lazy val documentation = project
 lazy val `sbt-changesets` = module
   .enablePlugins(SbtPlugin)
   .settings(scriptedLaunchOpts += s"-Dplugin.version=${version.value}")
+  .settings(scriptedLaunchOpts += "-DSNAPSHOT_SUFFIX=abc123")
   .settings(scriptedBufferLog := true)
   .settings(scriptedBatchExecution := true)
