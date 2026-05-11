@@ -15,5 +15,6 @@ lazy val `sbt-changesets` = module
   .enablePlugins(SbtPlugin)
   .settings(scriptedLaunchOpts += s"-Dplugin.version=${version.value}")
   .settings(scriptedLaunchOpts += "-DSNAPSHOT_SUFFIX=abc123")
+  .settings(scriptedLaunchOpts += s"-Dsbt.boot.directory=${sys.props("user.home")}/.sbt/boot")
   .settings(scriptedBufferLog := true)
   .settings(scriptedBatchExecution := true)
