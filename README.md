@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.4.1")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.4.2")
 ```
 
 This plugin depends on [sbt-modules](https://github.com/alejandrohdezma/sbt-modules), which is pulled in automatically. It expects modules to be defined using `module` instead of `project` in your `build.sbt`, with source code living under `modules/<module-name>/`. See the [sbt-modules documentation](https://github.com/alejandrohdezma/sbt-modules) for details.
@@ -88,7 +88,7 @@ The composite [GitHub Action](#github-actions) bundles this flow as the `prepare
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.4.1` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.4.2` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -117,7 +117,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.4.1
+        uses: alejandrohdezma/sbt-changesets@v0.4.2
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -152,7 +152,7 @@ jobs:
     if: github.event_name == 'pull_request' && needs.detect.outputs.affected != '[]'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.4.1
+      - uses: alejandrohdezma/sbt-changesets@v0.4.2
         with:
           mode: snapshot-comment
           coordinates: ${{ needs.detect.outputs.coordinates }}
@@ -169,7 +169,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.4.1
+      - uses: alejandrohdezma/sbt-changesets@v0.4.2
         with:
           mode: snapshot-comment
           coordinates: ${{ needs.detect.outputs.coordinates }}
@@ -202,7 +202,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.4.1
+      - uses: alejandrohdezma/sbt-changesets@v0.4.2
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -218,7 +218,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.4.1
+        uses: alejandrohdezma/sbt-changesets@v0.4.2
         with:
           mode: prepare-release
 
