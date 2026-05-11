@@ -1,0 +1,12 @@
+# Initialize git repo and create initial commit with all files
+$ exec git init
+$ exec git config user.email "test@test.com"
+$ exec git config user.name "Test"
+$ exec git add .
+$ exec git commit --no-gpg-sign -m "Initial commit"
+
+# Run the command — no module sources changed, only the changeset file in HEAD
+> changesetAffected
+
+# Verify affected modules come from the changeset, not from git diff
+$ must-mirror target/changeset/affected.json expected/affected.json
