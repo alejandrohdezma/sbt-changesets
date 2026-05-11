@@ -89,9 +89,9 @@ object Commands {
     "Validates changesets and outputs affected module names as JSON.",
     """|First validates that every changed module has a corresponding entry in a
        |.changeset/*.md file. Then writes a JSON array to target/changeset/affected.json
-       |containing the names of all modules that have changed files (compared to
-       |the base branch) plus their transitive dependents in the internal dependency
-       |graph.
+       |containing the names of all modules referenced by `.changeset/*.md` files or
+       |with changed files (compared to the base branch), plus their transitive
+       |dependents in the internal dependency graph.
        |
        |Fails the build if any modules are missing changeset entries.
        |Set CHANGESET_SKIP_VALIDATION=true to skip validation while still
@@ -101,17 +101,15 @@ object Commands {
     val base    = Project.extract(state).get(ThisBuild / baseDirectory)
     val modules = ModuleMetadata.from(state)
 
-    val changed = changedModules(state)
+    val changed     = changedModules(state)
+    val moduleNames = extractModuleNames(state)
+    val changesets  = parseAndValidate(base / ".changeset", moduleNames, state.log)
 
-    // Validate changesets for changed modules
     val skipValidation = sys.env.get("CHANGESET_SKIP_VALIDATION").contains("true")
 
     if (changed.nonEmpty && skipValidation)
       state.log.warn("CHANGESET_SKIP_VALIDATION is set. Skipping changeset validation.")
     else if (changed.nonEmpty) {
-      val moduleNames = extractModuleNames(state)
-      val changesets  = parseAndValidate(base / ".changeset", moduleNames, state.log)
-
       val missing = changed.diff(changesets.keys)
       if (missing.nonEmpty) {
         missing.toList.sorted.foreach(m => state.log.error(s"Missing changeset entry for: ${Colors.module(m)}"))
@@ -126,7 +124,8 @@ object Commands {
       }
     }
 
-    val affected = changed ++ changed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
+    val seed     = changed ++ changesets.keys
+    val affected = seed ++ seed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
 
     val json = Json.arr(affected.toList.sorted: _*)
 
