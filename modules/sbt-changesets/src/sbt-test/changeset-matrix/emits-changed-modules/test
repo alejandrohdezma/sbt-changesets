@@ -12,11 +12,7 @@ $ exec git add .
 $ exec git commit --no-gpg-sign -m "Bump versions"
 
 # Run the command
-> generatePublishMarkers
+> changesetMatrix
 
-# Verify .publish markers were created for changed modules
-$ exists modules/module-a/.publish
-$ exists modules/module-b/.publish
-
-# Verify .publish marker was NOT created for unchanged module
--$ exists modules/module-c/.publish
+# Verify the matrix file matches expected (sorted, only changed modules)
+$ must-mirror target/changeset/matrix.json expected/matrix.json

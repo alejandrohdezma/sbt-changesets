@@ -1,7 +1,7 @@
 ThisBuild / scalaVersion                  := "2.12.21"
 ThisBuild / organization                  := "com.alejandrohdezma"
 ThisBuild / pluginCrossBuild / sbtVersion := "1.4.0"
-ThisBuild / versionPolicyIntention        := Compatibility.BinaryAndSourceCompatible
+ThisBuild / versionPolicyIntention        := Compatibility.None
 
 addCommandAlias("ci-test", "fix --check; versionPolicyCheck; mdoc; scripted")
 addCommandAlias("ci-docs", "github; mdoc; headerCreateAll")
@@ -14,5 +14,7 @@ lazy val documentation = project
 lazy val `sbt-changesets` = module
   .enablePlugins(SbtPlugin)
   .settings(scriptedLaunchOpts += s"-Dplugin.version=${version.value}")
+  .settings(scriptedLaunchOpts += "-DSNAPSHOT_SUFFIX=abc123")
+  .settings(scriptedLaunchOpts += s"-Dsbt.boot.directory=${sys.props("user.home")}/.sbt/boot")
   .settings(scriptedBufferLog := true)
   .settings(scriptedBatchExecution := true)

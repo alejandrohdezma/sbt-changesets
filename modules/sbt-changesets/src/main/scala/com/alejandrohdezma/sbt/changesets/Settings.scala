@@ -31,23 +31,35 @@ import com.alejandrohdezma.sbt.modules.ModulesPlugin.autoImport.packageIsModule
 /** Reusable setting implementations for [[ChangesetPlugin]]. */
 object Settings {
 
-  /** Skip publish if the module has a `.publish` marker file and the current scala version is not in the
-    * crossScalaVersions.
+  /** Memoised snapshot timestamp.
     *
-    * During `+publish`, sbt iterates cross versions via root project aggregation. The root project's scalaVersion
-    * reflects the current `++` pass version. Skip if this project's crossScalaVersions doesn't include the current
-    * version to prevent double-publishing of modules that only target a subset of Scala versions.
+    * Computed once per JVM (lazy val) so that `+publishLocal` runs that span multiple `++` cross-build cycles produce
+    * artifacts sharing a single suffix. CI overrides this via the `SNAPSHOT_SUFFIX` env var (see [[versionFromFile]]).
+    */
+  private object Snapshot {
+
+    lazy val timestamp: String =
+      LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+
+  }
+
+  /** Skip publish for non-modules and for cross-build passes whose Scala version isn't in this project's
+    * `crossScalaVersions`.
+    *
+    * During an aggregated `+publish`, sbt iterates cross versions via root project aggregation. The root project's
+    * `scalaVersion` reflects the current `++` pass version. Skip if this project's `crossScalaVersions` doesn't include
+    * the current version to prevent double-publishing of modules that only target a subset of Scala versions.
     */
   val skipPublish: Def.Initialize[Boolean] = Def.setting {
-    if (!(baseDirectory.value / ".publish").exists()) true
-    else !crossScalaVersions.value.contains((LocalRootProject / scalaVersion).value)
+    !packageIsModule.value || !crossScalaVersions.value.contains((LocalRootProject / scalaVersion).value)
   }
 
   /** Derives the version from a `VERSION` file in the module's base directory.
     *
-    * By default the version includes a timestamp-SNAPSHOT suffix for local development and CI snapshots. When the
-    * `RELEASE` environment variable is set to `"true"`, the version is the raw content of the `VERSION` file (used for
-    * CI releases).
+    * By default the version includes a snapshot suffix of the form `<base>-<suffix>-SNAPSHOT`. The suffix is read from
+    * the `SNAPSHOT_SUFFIX` env var (or, as a fallback for tests, the system property of the same name); when neither is
+    * set, falls back to a timestamp memoised once per JVM. When the `RELEASE` environment variable is set to `"true"`,
+    * the version is the raw content of the `VERSION` file (used for CI releases).
     *
     * If a module is missing its `VERSION` file, the build fails.
     */
@@ -57,11 +69,14 @@ object Settings {
     if (versionFile.exists()) {
       val versionInFile = IO.read(versionFile).trim
 
+      lazy val suffix = sys.env
+        .get("SNAPSHOT_SUFFIX")
+        .orElse(sys.props.get("SNAPSHOT_SUFFIX"))
+        .filter(_.nonEmpty)
+        .getOrElse(Snapshot.timestamp)
+
       if (sys.env.get("RELEASE").contains("true")) versionInFile
-      else {
-        val format = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-        s"$versionInFile-${LocalDateTime.now().format(format)}-SNAPSHOT"
-      }
+      else s"$versionInFile-$suffix-SNAPSHOT"
     } else if (packageIsModule.value) {
       sys.error(s"Missing VERSION file for module '${name.value}' at `${versionFile.absolutePath}`")
     } else version.value
