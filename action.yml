@@ -143,6 +143,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
         PR_NUMBER: ${{ inputs.pr-number }}
         COORDINATES: ${{ inputs.coordinates }}
       run: |
