@@ -84,83 +84,6 @@ object Commands {
     state
   }
 
-  val changesetAffected: Command = Command.command(
-    "changesetAffected",
-    "Validates changesets and outputs affected (module, scala-version) rows as JSON.",
-    """|First validates that every changed module has a corresponding entry in a
-       |.changeset/*.md file. Then writes a JSON array to target/changeset/affected.json
-       |with one entry per (module, scala-version) pair, where module is any module
-       |referenced by `.changeset/*.md` files or with changed files (compared to the
-       |base branch) — plus its transitive dependents in the internal dependency
-       |graph — and scala-version iterates over the module's `crossScalaVersions`.
-       |
-       |Output format:
-       |
-       |  [
-       |    { "module": "module-a", "scala-version": "2.13.18" },
-       |    { "module": "module-a", "scala-version": "3.3.7" },
-       |    { "module": "module-b", "scala-version": "3.3.7" }
-       |  ]
-       |
-       |Fails the build if any modules are missing changeset entries.
-       |Set CHANGESET_SKIP_VALIDATION=true to skip validation while still
-       |computing affected modules.
-       |Suitable as input for a GitHub Actions `matrix.include` strategy.""".stripMargin
-  ) { state =>
-    val extracted = Project.extract(state)
-    val base      = extracted.get(ThisBuild / baseDirectory)
-    val modules   = ModuleMetadata.from(state)
-
-    val changed     = changedModules(state)
-    val moduleNames = extractModuleNames(state)
-    val changesets  = parseAndValidate(base / ".changeset", moduleNames, state.log)
-
-    val skipValidation = sys.env.get("CHANGESET_SKIP_VALIDATION").contains("true")
-
-    if (changed.nonEmpty && skipValidation)
-      state.log.warn("CHANGESET_SKIP_VALIDATION is set. Skipping changeset validation.")
-    else if (changed.nonEmpty) {
-      val missing = changed.diff(changesets.keys)
-      if (missing.nonEmpty) {
-        missing.toList.sorted.foreach(m => state.log.error(s"Missing changeset entry for: ${Colors.module(m)}"))
-        throw new MessageOnlyException(s"Missing changeset entries for ${missing.size} modified module(s).")
-      } else state.log.info(s"Changeset entries found for: ${changed.toList.sorted.map(Colors.module).mkString(", ")}")
-
-      changesets.validateDescriptions match {
-        case Left(errors) =>
-          errors.foreach(e => state.log.error(e))
-          throw new MessageOnlyException(s"${errors.size} changeset(s) still have the template description.")
-        case Right(_) => ()
-      }
-    }
-
-    val seed     = changed ++ changesets.keys
-    val affected = seed ++ seed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
-
-    val refsByName = extracted.structure.allProjectRefs
-      .filter(ref => extracted.get(ref / packageIsModule))
-      .map(ref => extracted.get(ref / Keys.name) -> ref)
-      .toMap
-
-    val rows = affected.toList.sorted.flatMap { name =>
-      refsByName.get(name).toList.flatMap { ref =>
-        extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
-          Json.obj("module" := name, "scala-version" := sv)
-        }
-      }
-    }
-
-    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
-
-    val file = base / "target" / "changeset" / "affected.json"
-
-    IO.write(file, json.show())
-
-    state.log.info(s"Wrote affected (module, scala-version) rows to ${Colors.path(file)}")
-
-    state
-  }
-
   val changesetVersion: Command = Command.command(
     "changesetVersion",
     "Bumps VERSION files based on changeset files with cascading bumps.",
@@ -212,156 +135,32 @@ object Commands {
     state
   }
 
-  val changesetMatrix: Command = Command.command(
+  val changesetMatrix: Command = Command.single(
     "changesetMatrix",
-    "Outputs JSON array of {module, scala-version} rows whose VERSION changed in the last commit.",
-    """|Detects which modules need publishing by running git diff on the last commit
-       |and writes a JSON array to target/changeset/matrix.json with one entry per
-       |(module, scala-version) pair, where module is any module whose VERSION file
-       |was modified and scala-version iterates over the module's `crossScalaVersions`.
+    "changesetMatrix <validate|release>" -> "Outputs the stage-appropriate work matrix as JSON.",
+    """|For `validate`: validates that every changed module has a changeset entry,
+       |computes affected modules (changed + transitive dependents), expands each
+       |by `crossScalaVersions`, and attaches snapshot `{version, coordinate}` per
+       |row. Set CHANGESET_SKIP_VALIDATION=true to skip the entry check while
+       |still computing affected.
        |
-       |Output format:
+       |For `release`: detects modules whose VERSION file changed in the last
+       |commit, expands by `crossScalaVersions`, and attaches release
+       |`{version, changelog}` per row.
        |
-       |  [
-       |    { "module": "module-a", "scala-version": "2.13.18" },
-       |    { "module": "module-a", "scala-version": "3.3.7" },
-       |    { "module": "module-b", "scala-version": "3.3.7" }
-       |  ]
-       |
-       |Suitable as input for a GitHub Actions `matrix.include` strategy where each
-       |cell runs `sbt "++<scala-version> <module>/publish"`.""".stripMargin
-  ) { state =>
-    val extracted = Project.extract(state)
-    val base      = extracted.get(ThisBuild / baseDirectory)
+       |Either way, writes the result to target/changeset/matrix.json. Suitable
+       |as input for a GitHub Actions `matrix.include` strategy.""".stripMargin
+  ) {
+    case (state, "validate") =>
+      computeValidateMatrix(state)
 
-    val diff = Process(Seq("git", "diff", "--name-only", "HEAD~1", "--", "modules/*/VERSION"), base).!!.trim
+    case (state, "release") =>
+      computeReleaseMatrix(state)
 
-    val changed = diff.linesIterator
-      .filter(_.startsWith("modules/"))
-      .flatMap(_.stripPrefix("modules/").split("/").headOption)
-      .toSet
-
-    val refsByName = extracted.structure.allProjectRefs
-      .filter(ref => extracted.get(ref / packageIsModule))
-      .map(ref => extracted.get(ref / Keys.name) -> ref)
-      .toMap
-
-    val rows = changed.intersect(refsByName.keySet).toList.sorted.flatMap { name =>
-      refsByName.get(name).toList.flatMap { ref =>
-        extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
-          Json.obj("module" := name, "scala-version" := sv)
-        }
-      }
-    }
-
-    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
-
-    val file = base / "target" / "changeset" / "matrix.json"
-
-    IO.write(file, json.show())
-
-    state.log.info(s"Wrote publish matrix to ${Colors.path(file)}")
-
-    state
-  }
-
-  val extractSnapshotCoordinates: Command = Command.args(
-    "extractSnapshotCoordinates",
-    "extractSnapshotCoordinates" -> "Outputs JSON of resolved snapshot coordinates for the given modules.",
-    """|Resolves each module's organization and snapshot version, and writes
-       |`target/changeset/snapshot-coordinates.json` — a JSON array whose
-       |elements have the shape `{module, version, coordinate}`.
-       |
-       |The version honours the `SNAPSHOT_SUFFIX` env var (or system property of
-       |the same name); when neither is set, falls back to a JVM-memoised
-       |timestamp.
-       |
-       |Intended to feed the `snapshot-comment` action mode after a matrix
-       |snapshot publish.""".stripMargin,
-    "<module-name> [<module-name>...]"
-  ) { (state, args) =>
-    if (args.isEmpty) {
-      val msg = "Usage: extractSnapshotCoordinates <module-name> [<module-name>...]"
+    case (state, other) =>
+      val msg = s"Unknown stage '$other'; expected 'validate' or 'release'"
       state.log.error(msg)
       throw new MessageOnlyException(msg)
-    }
-
-    val extracted = Project.extract(state)
-    val base      = extracted.get(ThisBuild / baseDirectory)
-
-    val refsByName = extracted.structure.allProjectRefs
-      .filter(ref => extracted.get(ref / packageIsModule))
-      .map(ref => extracted.get(ref / Keys.name) -> ref)
-      .toMap
-
-    val unknown = args.filterNot(refsByName.contains)
-    if (unknown.nonEmpty) {
-      unknown.foreach(name => state.log.error(s"Module not found: ${Colors.module(name)}"))
-      throw new MessageOnlyException(s"${unknown.size} unknown module(s)")
-    }
-
-    val coordinates = args.sorted.map { name =>
-      val ref = refsByName(name)
-      val org = extracted.get(ref / organization)
-      val ver = extracted.get(ref / version)
-
-      Json.obj(
-        "module"     := name,
-        "version"    := ver,
-        "coordinate" := s""""$org" %% "$name" % "$ver""""
-      )
-    }
-
-    val file = base / "target" / "changeset" / "snapshot-coordinates.json"
-    IO.write(file, Json.arr(coordinates: _*)(DummyImplicit.dummyImplicit).show())
-
-    state.log.info(s"Wrote snapshot coordinates to ${Colors.path(file)}")
-
-    state
-  }
-
-  val extractChangelogs: Command = Command.args(
-    "extractChangelogs",
-    "extractChangelogs" -> "Outputs JSON of {module, version, changelog} rows for the given modules.",
-    """|For each module argument, reads `modules/<module>/VERSION` and the matching
-       |`## <version>` entry in `modules/<module>/CHANGELOG.md`, and writes
-       |`target/changeset/release-modules.json` — a JSON array whose elements have the
-       |shape `{module, version, changelog}`.
-       |
-       |Intended to feed the `detect` action's `release-modules` output so the
-       |downstream release-tag job can create GitHub releases without re-invoking
-       |sbt or even checking out the working tree.""".stripMargin,
-    "<module-name> [<module-name>...]"
-  ) { (state, args) =>
-    if (args.isEmpty) {
-      val msg = "Usage: extractChangelogs <module-name> [<module-name>...]"
-      state.log.error(msg)
-      throw new MessageOnlyException(msg)
-    }
-
-    val base        = Project.extract(state).get(ThisBuild / baseDirectory)
-    val moduleNames = extractModuleNames(state)
-
-    val unknown = args.filterNot(moduleNames.contains)
-    if (unknown.nonEmpty) {
-      unknown.foreach(name => state.log.error(s"Module not found: ${Colors.module(name)}"))
-      throw new MessageOnlyException(s"${unknown.size} unknown module(s)")
-    }
-
-    val rows = args.sorted.map { name =>
-      val dir     = base / "modules" / name
-      val version = IO.read(dir / "VERSION").trim
-      val body    = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", version)
-      Json.obj("module" := name, "version" := version, "changelog" := body)
-    }
-
-    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
-    val file = base / "target" / "changeset" / "release-modules.json"
-    IO.write(file, json.show())
-
-    state.log.info(s"Wrote ${args.size} release-module(s) to ${Colors.path(file)}")
-
-    state
   }
 
   val changesetAdd: Command = Command.args(
@@ -465,10 +264,126 @@ object Commands {
     }
   }
 
-  val all: Seq[Command] = Seq(changesetConfig, changesetAffected, changesetVersion, extractSnapshotCoordinates,
-    extractChangelogs, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
+  val all: Seq[Command] =
+    Seq(changesetConfig, changesetVersion, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
 
   // ─── Internal helpers ─────────────────────────
+
+  /** Validates changesets, computes affected modules (changed + transitive dependents) and emits a
+    * `[{module, scala-version, version, coordinate}, ...]` matrix to `target/changeset/matrix.json`.
+    *
+    * The `version` and `coordinate` come from sbt's `version` and `organization` settings — i.e. the snapshot version
+    * including any `SNAPSHOT_SUFFIX`.
+    */
+  private def computeValidateMatrix(state: State): State = {
+    val extracted = Project.extract(state)
+    val base      = extracted.get(ThisBuild / baseDirectory)
+    val modules   = ModuleMetadata.from(state)
+    val refs      = moduleRefs(state)
+
+    val changed    = changedModules(state)
+    val changesets = parseAndValidate(base / ".changeset", refs.keySet, state.log)
+
+    val skipValidation = sys.env.get("CHANGESET_SKIP_VALIDATION").contains("true")
+
+    if (changed.nonEmpty && skipValidation)
+      state.log.warn("CHANGESET_SKIP_VALIDATION is set. Skipping changeset validation.")
+    else if (changed.nonEmpty) {
+      val missing = changed.diff(changesets.keys)
+
+      if (missing.nonEmpty) {
+        missing.toList.sorted.foreach(m => state.log.error(s"Missing changeset entry for: ${Colors.module(m)}"))
+        throw new MessageOnlyException(s"Missing changeset entries for ${missing.size} modified module(s).")
+      } else state.log.info(s"Changeset entries found for: ${changed.toList.sorted.map(Colors.module).mkString(", ")}")
+
+      changesets.validateDescriptions match {
+        case Left(errors) =>
+          errors.foreach(e => state.log.error(e))
+          throw new MessageOnlyException(s"${errors.size} changeset(s) still have the template description.")
+        case Right(_) => ()
+      }
+    }
+
+    val seed     = changed ++ changesets.keys
+    val affected = seed ++ seed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
+
+    val rows = affected.toList.sorted.flatMap { name =>
+      refs.get(name).toList.flatMap { ref =>
+        val org = extracted.get(ref / organization)
+        val ver = extracted.get(ref / version)
+
+        extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
+          Json.obj(
+            "module"        := name,
+            "scala-version" := sv,
+            "version"       := ver,
+            "coordinate"    := s""""$org" %% "$name" % "$ver""""
+          )
+        }
+      }
+    }
+
+    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
+    val file = base / "target" / "changeset" / "matrix.json"
+    IO.write(file, json.show())
+
+    state.log.info(s"Wrote validate-stage matrix to ${Colors.path(file)}")
+    state
+  }
+
+  /** Detects modules whose VERSION file changed in the last commit and emits a
+    * `[{module, scala-version, version, changelog}, ...]` matrix to `target/changeset/matrix.json`.
+    *
+    * The `version` is read directly from `modules/<module>/VERSION` and the `changelog` is the matching `## <version>`
+    * entry from `modules/<module>/CHANGELOG.md`.
+    */
+  private def computeReleaseMatrix(state: State): State = {
+    val extracted = Project.extract(state)
+    val base      = extracted.get(ThisBuild / baseDirectory)
+    val refs      = moduleRefs(state)
+
+    val diff = Process(Seq("git", "diff", "--name-only", "HEAD~1", "--", "modules/*/VERSION"), base).!!.trim
+
+    val changed = diff.linesIterator
+      .filter(_.startsWith("modules/"))
+      .flatMap(_.stripPrefix("modules/").split("/").headOption)
+      .toSet
+      .intersect(refs.keySet)
+
+    val rows = changed.toList.sorted.flatMap { name =>
+      val dir       = base / "modules" / name
+      val ver       = IO.read(dir / "VERSION").trim
+      val changelog = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", ver)
+
+      refs.get(name).toList.flatMap { ref =>
+        extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
+          Json.obj(
+            "module"        := name,
+            "scala-version" := sv,
+            "version"       := ver,
+            "changelog"     := changelog
+          )
+        }
+      }
+    }
+
+    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
+    val file = base / "target" / "changeset" / "matrix.json"
+    IO.write(file, json.show())
+
+    state.log.info(s"Wrote release-stage matrix to ${Colors.path(file)}")
+    state
+  }
+
+  /** Returns a map from module name to its `ProjectRef`, filtered to projects with `packageIsModule := true`. */
+  private def moduleRefs(state: State): Map[String, ProjectRef] = {
+    val extracted = Project.extract(state)
+
+    extracted.structure.allProjectRefs
+      .filter(ref => extracted.get(ref / packageIsModule))
+      .map(ref => extracted.get(ref / Keys.name) -> ref)
+      .toMap
+  }
 
   /** Detects which modules have changed files compared to the base branch.
     *

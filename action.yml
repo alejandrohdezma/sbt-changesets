@@ -74,52 +74,40 @@ runs:
       env:
         CHANGESET_SKIP_VALIDATION: ${{ inputs.skip-validation }}
       run: |
-        sbt "changesetAffected; changesetMatrix" || {
-          if [ -n "${{ inputs.error-help-url }}" ]; then
-            echo "See: ${{ inputs.error-help-url }}"
-          fi
-          exit 1
-        }
-        AFFECTED=$(jq -c . target/changeset/affected.json)
-        MATRIX_PAIRS=$(jq -c . target/changeset/matrix.json)
-        AFFECTED_MODULES=$(echo "$AFFECTED" | jq -c '[.[].module] | unique')
-        RELEASE_MODULE_NAMES=$(echo "$MATRIX_PAIRS" | jq -r '[.[].module] | unique | .[]' | tr '\n' ' ')
         COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
+        MATRIX="[]"
+        STAGE=""
 
-        if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$AFFECTED" != "[]" ]; then
-          STAGE="validate"
-        elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$COUNT" != "0" ]; then
-          STAGE="apply-changesets"
-        elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$MATRIX_PAIRS" != "[]" ]; then
-          STAGE="release"
-        else
-          STAGE=""
-        fi
-        echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
-
-        case "$STAGE" in
-          validate)
-            MODULES=$(echo "$AFFECTED_MODULES" | jq -r '.[]' | tr '\n' ' ')
-            sbt "extractSnapshotCoordinates $MODULES"
-            MATRIX=$(jq -c --slurpfile coords target/changeset/snapshot-coordinates.json \
-              '($coords[0] | INDEX(.module)) as $idx | map(. + $idx[.module])' \
-              target/changeset/affected.json)
-            ;;
-          release)
-            sbt "extractChangelogs $RELEASE_MODULE_NAMES"
-            MATRIX=$(jq -c --slurpfile rm target/changeset/release-modules.json \
-              '($rm[0] | INDEX(.module)) as $idx | map(. + $idx[.module])' \
-              target/changeset/matrix.json)
-            BYTES=$(printf '%s' "$MATRIX" | wc -c | tr -d ' ')
-            if [ "$BYTES" -gt 400000 ]; then
-              echo "::error::matrix payload is $BYTES bytes (UTF-8); GitHub Actions job outputs are capped at 1 MB UTF-16 (~500 KB UTF-8). Reduce changelog verbosity or split the release."
+        case "$GITHUB_EVENT_NAME" in
+          pull_request)
+            sbt "changesetMatrix validate" || {
+              if [ -n "${{ inputs.error-help-url }}" ]; then
+                echo "See: ${{ inputs.error-help-url }}"
+              fi
               exit 1
+            }
+            MATRIX=$(jq -c . target/changeset/matrix.json)
+            [ "$MATRIX" != "[]" ] && STAGE="validate"
+            ;;
+          push)
+            if [ "$COUNT" != "0" ]; then
+              STAGE="apply-changesets"
+            else
+              sbt "changesetMatrix release"
+              MATRIX=$(jq -c . target/changeset/matrix.json)
+              if [ "$MATRIX" != "[]" ]; then
+                STAGE="release"
+                BYTES=$(printf '%s' "$MATRIX" | wc -c | tr -d ' ')
+                if [ "$BYTES" -gt 400000 ]; then
+                  echo "::error::matrix payload is $BYTES bytes (UTF-8); GitHub Actions job outputs are capped at 1 MB UTF-16 (~500 KB UTF-8). Reduce changelog verbosity or split the release."
+                  exit 1
+                fi
+              fi
             fi
             ;;
-          *)
-            MATRIX="[]"
-            ;;
         esac
+
+        echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
         echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
     # ─── Apply-changesets ────────────────────────
