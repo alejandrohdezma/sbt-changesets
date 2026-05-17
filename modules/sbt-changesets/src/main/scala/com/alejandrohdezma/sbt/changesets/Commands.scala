@@ -311,13 +311,14 @@ object Commands {
       refs.get(name).toList.flatMap { ref =>
         val org = extracted.get(ref / organization)
         val ver = extracted.get(ref / version)
+        val sep = if (extracted.get(ref / crossPaths)) "%%" else "%"
 
         extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
           Json.obj(
             "module"        := name,
             "scala-version" := sv,
             "version"       := ver,
-            "coordinate"    := s""""$org" %% "$name" % "$ver""""
+            "coordinate"    := s""""$org" $sep "$name" % "$ver""""
           )
         }
       }
