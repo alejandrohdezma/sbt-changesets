@@ -1,0 +1,11 @@
+# Extract both modules' latest CHANGELOG bodies into a single JSON array
+> extractChangelogs module-a module-b
+
+# Verify the array matches expected exactly (sorted by module name)
+$ must-mirror target/changeset/release-modules.json expected/release-modules.json
+
+# Unknown module fails clearly
+-> extractChangelogs module-does-not-exist
+
+# No-args usage prints help and fails
+-> extractChangelogs

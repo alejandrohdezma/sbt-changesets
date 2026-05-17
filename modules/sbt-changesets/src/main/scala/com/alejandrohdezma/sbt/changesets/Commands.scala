@@ -359,6 +359,50 @@ object Commands {
     state
   }
 
+  val extractChangelogs: Command = Command.args(
+    "extractChangelogs",
+    "extractChangelogs" -> "Outputs JSON of {module, version, changelog} rows for the given modules.",
+    """|For each module argument, reads `modules/<module>/VERSION` and the matching
+       |`## <version>` entry in `modules/<module>/CHANGELOG.md`, and writes
+       |`target/changeset/release-modules.json` — a JSON array whose elements have the
+       |shape `{module, version, changelog}`.
+       |
+       |Intended to feed the `detect` action's `release-modules` output so the
+       |downstream release-tag job can create GitHub releases without re-invoking
+       |sbt or even checking out the working tree.""".stripMargin,
+    "<module-name> [<module-name>...]"
+  ) { (state, args) =>
+    if (args.isEmpty) {
+      val msg = "Usage: extractChangelogs <module-name> [<module-name>...]"
+      state.log.error(msg)
+      throw new MessageOnlyException(msg)
+    }
+
+    val base        = Project.extract(state).get(ThisBuild / baseDirectory)
+    val moduleNames = extractModuleNames(state)
+
+    val unknown = args.filterNot(moduleNames.contains)
+    if (unknown.nonEmpty) {
+      unknown.foreach(name => state.log.error(s"Module not found: ${Colors.module(name)}"))
+      throw new MessageOnlyException(s"${unknown.size} unknown module(s)")
+    }
+
+    val rows = args.sorted.map { name =>
+      val dir     = base / "modules" / name
+      val version = IO.read(dir / "VERSION").trim
+      val body    = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", version)
+      Json.obj("module" := name, "version" := version, "changelog" := body)
+    }
+
+    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
+    val file = base / "target" / "changeset" / "release-modules.json"
+    IO.write(file, json.show())
+
+    state.log.info(s"Wrote ${args.size} release-module(s) to ${Colors.path(file)}")
+
+    state
+  }
+
   val changesetAdd: Command = Command.args(
     "changesetAdd",
     "<bump> <description...>"
@@ -461,7 +505,7 @@ object Commands {
   }
 
   val all: Seq[Command] = Seq(changesetConfig, changesetAffected, changesetVersion, extractLatestChangelog,
-    extractSnapshotCoordinates, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
+    extractSnapshotCoordinates, extractChangelogs, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
 
   // ─── Internal helpers ─────────────────────────
 

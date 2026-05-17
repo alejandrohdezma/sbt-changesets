@@ -105,7 +105,7 @@ Validates that all changed modules have changeset entries and outputs everything
 - `affected`: JSON array of `{module, scala-version}` rows (changed modules and their transitive dependents, expanded over each module's `crossScalaVersions`). Plug directly into `matrix.include` for the PR validate / snapshot publish job.
 - `affected-modules`: distinct module names derived from `affected`. Use for empty-set gating and per-module steps.
 - `matrix`: JSON array of `{module, scala-version}` rows whose `VERSION` file changed in the last commit. Plug into `matrix.include` for the publish job that runs after a Version Packages PR merge.
-- `release-modules`: distinct module names derived from `matrix`. Feed into the per-module `release-tag` job that creates GitHub releases.
+- `release-modules`: JSON array of `{module, version, changelog}` rows — one per distinct module being released. Lets the `release-tag` job create GitHub releases as pure `gh` API calls — no sbt, no checkout. Hard-fails the action if the serialised payload exceeds 400 KB UTF-8 (≈ 800 KB UTF-16, well under GitHub's 1 MB per-job output cap) — if you hit it, reduce changelog verbosity or split the release.
 - `changesets-count`: number of pending `.changeset/*.md` files. Use on push-to-main to dispatch between `apply-changesets` (count != 0) and the release pipeline (count == 0).
 - `coordinates`: resolved Maven coordinates for each affected module's snapshot (one per module, not per Scala version — `%%` lets the consumer pick the suffix).
 
@@ -234,29 +234,35 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        module: ${{ fromJson(needs.detect.outputs.release-modules) }}
     steps:
-      - uses: actions/checkout@@v4
-
-      - name: Extract changelog
-        run: sbt "extractLatestChangelog ${{ matrix.module }}"
-
-      - name: Create GitHub release
+      - name: Create GitHub releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MODULE: ${{ matrix.module }}
+          GH_REPO: ${{ github.repository }}
+          RELEASES: ${{ needs.detect.outputs.release-modules }}
         run: |
-          TAG="$MODULE@$(cat "modules/$MODULE/VERSION")"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes-file target/changeset/changelog.md \
-            --target main
+          for ENTRY in $(jq -c '.[]' <<< "$RELEASES"); do
+            MODULE=$(jq -r .module <<< "$ENTRY")
+            VERSION=$(jq -r .version <<< "$ENTRY")
+            TAG="$MODULE@$VERSION"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG already exists; skipping."
+              continue
+            fi
+            BODY_FILE=$(mktemp)
+            jq -r .changelog <<< "$ENTRY" > "$BODY_FILE"
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "$BODY_FILE" \
+              --target main
+            rm -f "$BODY_FILE"
+            echo "Created release: $TAG"
+          done
 ```
 
-`release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because re-publishing the same `RELEASE` version to a Maven repo is rejected, surfacing the partial-state.
+`release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because the loop skips tags that already exist; new tags get created as expected.
+
+A single job with a loop replaces the per-module matrix: `gh release create` is a sub-second API call, so paying a per-cell runner setup wasn't earning any parallelism. Each `release-modules` row carries `module`, `version`, and `changelog` inline, so `release-tag` runs without sbt and without checkout — pure `gh` API calls.
 
 ### Inputs
 
@@ -277,6 +283,6 @@ jobs:
 | `affected` | `detect` | JSON array of `{module, scala-version}` rows for PR validation. Consume as `matrix.include` |
 | `affected-modules` | `detect` | JSON array of distinct affected module names |
 | `matrix` | `detect` | JSON array of `{module, scala-version}` rows to publish after a Version Packages PR merge. Consume as `matrix.include` |
-| `release-modules` | `detect` | JSON array of distinct module names being released |
+| `release-modules` | `detect` | JSON array of `{module, version, changelog}` rows — one per distinct module being released. Feed into `gh release create` |
 | `changesets-count` | `detect` | Number of pending `.changeset/*.md` files |
 | `coordinates` | `detect` | JSON array of `{module, version, coordinate}` snapshot coordinates |

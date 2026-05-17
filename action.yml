@@ -51,7 +51,7 @@ outputs:
     description: "JSON array of `{module, scala-version}` rows to publish — one row per (module, Scala version) pair whose VERSION changed in the last commit. Consume directly as a GitHub Actions `matrix.include`. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.matrix }}
   release-modules:
-    description: "JSON array of distinct module names being released, derived from the `matrix` output. Use for the per-module GH-release-creation job. (only set when mode is 'detect')"
+    description: "JSON array of `{module, changelog}` rows — one per distinct module being released. The `changelog` field is the matching `## <version>` body from the module's CHANGELOG.md. Feed into the release-tag job so it can create GitHub releases without booting sbt. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.release-modules }}
 
 runs:
@@ -68,8 +68,10 @@ runs:
     #   - `matrix`: JSON array of `{module, scala-version}` rows whose VERSION changed
     #     in the last commit — consume as `matrix.include` in the publish job that runs
     #     after a Version Packages PR merge.
-    #   - `release-modules`: distinct module names derived from `matrix`. Feed into the
-    #     per-module GH-release-creation job.
+    #   - `release-modules`: JSON array of `{module, changelog}` rows for the
+    #     distinct modules being released. Lets the release-tag job create GitHub
+    #     releases without booting sbt. Hard-fails if the serialised payload exceeds
+    #     400 KB UTF-8 (~800 KB UTF-16), well under GitHub's 1 MB per-job output cap.
     #   - `changesets-count`: number of pending `.changeset/*.md` files. Use to
     #     dispatch between `apply-changesets` (count != 0) and the release pipeline
     #     (count == 0) on push-to-main.
@@ -101,13 +103,32 @@ runs:
         MATRIX=$(jq -c . target/changeset/matrix.json)
         echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
-        RELEASE_MODULES=$(echo "$MATRIX" | jq -c '[.[].module] | unique')
-        echo "release-modules=$RELEASE_MODULES" >> "$GITHUB_OUTPUT"
+        RELEASE_MODULE_NAMES=$(echo "$MATRIX" | jq -r '[.[].module] | unique | .[]' | tr '\n' ' ')
 
+        SBT_PHASE_2=""
         if [ "$AFFECTED_MODULES" != "[]" ]; then
           MODULES=$(echo "$AFFECTED_MODULES" | jq -r '.[]' | tr '\n' ' ')
-          sbt "extractSnapshotCoordinates $MODULES"
+          SBT_PHASE_2="extractSnapshotCoordinates $MODULES"
+        fi
+        if [ -n "$RELEASE_MODULE_NAMES" ]; then
+          SBT_PHASE_2="${SBT_PHASE_2:+$SBT_PHASE_2; }extractChangelogs $RELEASE_MODULE_NAMES"
+        fi
+        if [ -n "$SBT_PHASE_2" ]; then
+          sbt "$SBT_PHASE_2"
+        fi
+
+        if [ "$AFFECTED_MODULES" != "[]" ]; then
           echo "coordinates=$(jq -c . target/changeset/snapshot-coordinates.json)" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -n "$RELEASE_MODULE_NAMES" ]; then
+          BYTES=$(wc -c < target/changeset/release-modules.json | tr -d ' ')
+          if [ "$BYTES" -gt 400000 ]; then
+            echo "::error::release-modules payload is $BYTES bytes (UTF-8); GitHub Actions job outputs are capped at 1 MB UTF-16 (~500 KB UTF-8). Reduce changelog verbosity or split the release."
+            exit 1
+          fi
+          echo "release-modules=$(jq -c . target/changeset/release-modules.json)" >> "$GITHUB_OUTPUT"
+        else
+          echo "release-modules=[]" >> "$GITHUB_OUTPUT"
         fi
 
         COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
