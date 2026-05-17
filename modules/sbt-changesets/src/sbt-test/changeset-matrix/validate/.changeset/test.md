@@ -2,6 +2,7 @@
 "module-a": patch
 "module-b": patch
 "module-d": patch
+"module-e": patch
 ---
 
-Shared dependency bump that affects module-a, module-b, and the Java module-d without touching their source files.
+Shared dependency bump that affects module-a, module-b, the Java module-d, and the test-scoped module-e without touching their source files.

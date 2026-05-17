@@ -22,5 +22,17 @@
     "scala-version": "3.3.7",
     "version": "4.0.0-abc123-SNAPSHOT",
     "coordinate": "\"com.example\" % \"module-d\" % \"4.0.0-abc123-SNAPSHOT\""
+  },
+  {
+    "module": "module-e",
+    "scala-version": "2.13.18",
+    "version": "5.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"module-e\" % \"5.0.0-abc123-SNAPSHOT\" % \"test\""
+  },
+  {
+    "module": "module-e",
+    "scala-version": "3.3.7",
+    "version": "5.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"module-e\" % \"5.0.0-abc123-SNAPSHOT\" % \"test\""
   }
 ]

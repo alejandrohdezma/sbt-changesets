@@ -108,4 +108,7 @@ object Settings {
       }
   }
 
+  /** The separator to use between the organization, name, and version in the changeset coordinate. */
+  val separator: Def.Initialize[String] = Def.setting(if (crossPaths.value) "%%" else "%")
+
 }

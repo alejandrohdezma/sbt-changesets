@@ -124,7 +124,7 @@ object Commands {
 
     // Write version summary
     val summaryFile = base / "target" / "changeset" / "version-summary.json"
-    IO.write(summaryFile, Json.arr(summary: _*)(DummyImplicit.dummyImplicit).show())
+    IO.write(summaryFile, Json.arr(summary: _*).show())
     state.log.info(s"Wrote version summary to ${Colors.path(summaryFile)}")
 
     // Remove processed changeset files
@@ -309,22 +309,18 @@ object Commands {
 
     val rows = affected.toList.sorted.flatMap { name =>
       refs.get(name).toList.flatMap { ref =>
-        val org = extracted.get(ref / organization)
-        val ver = extracted.get(ref / version)
-        val sep = if (extracted.get(ref / crossPaths)) "%%" else "%"
-
         extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
           Json.obj(
             "module"        := name,
             "scala-version" := sv,
-            "version"       := ver,
-            "coordinate"    := s""""$org" $sep "$name" % "$ver""""
+            "version"       := extracted.get(ref / version),
+            "coordinate"    := extracted.get(ref / changesetCoordinate)
           )
         }
       }
     }
 
-    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
+    val json = Json.arr(rows: _*)
     val file = base / "target" / "changeset" / "matrix.json"
     IO.write(file, json.show())
 
@@ -368,7 +364,7 @@ object Commands {
       }
     }
 
-    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
+    val json = Json.arr(rows: _*)
     val file = base / "target" / "changeset" / "matrix.json"
     IO.write(file, json.show())
 
