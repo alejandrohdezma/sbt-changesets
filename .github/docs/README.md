@@ -92,7 +92,7 @@ Modules that are only bumped through cascade get auto-generated descriptions lis
 
 After version bumps are committed, `changesetMatrix` writes `target/changeset/matrix.json` — a JSON array of `{module, scala-version}` rows for every (module, Scala version) whose `VERSION` file just changed — which feeds a `publish` matrix that publishes each pair on its own runner in parallel via `sbt "++<scala-version> <module>/publish"`. A downstream `release-tag` job then runs once per distinct module, calls `extractLatestChangelog <module>`, and uses the result as the GitHub release notes.
 
-The composite [GitHub Action](#github-actions) bundles this flow as the `prepare-release` mode, which emits both `matrix` (for `publish`) and `release-modules` (for `release-tag`).
+The composite [GitHub Action](#github-actions) bundles this flow into `detect` mode, which (when the workflow runs on a Version Packages PR merge) emits both `matrix` (for `publish`) and `release-modules` (for `release-tag`) alongside its PR-side outputs.
 
 ## GitHub Actions
 
@@ -100,14 +100,16 @@ This repository also provides a composite GitHub Action that orchestrates the fu
 
 ### `detect` mode
 
-Validates that all changed modules have changeset entries and outputs:
+Validates that all changed modules have changeset entries and outputs everything the rest of the workflow needs:
 
-- `affected`: JSON array of `{module, scala-version}` rows (changed modules and their transitive dependents, expanded over each module's `crossScalaVersions`). Plug directly into `matrix.include`.
+- `affected`: JSON array of `{module, scala-version}` rows (changed modules and their transitive dependents, expanded over each module's `crossScalaVersions`). Plug directly into `matrix.include` for the PR validate / snapshot publish job.
 - `affected-modules`: distinct module names derived from `affected`. Use for empty-set gating and per-module steps.
-- `changesets-count`: number of pending `.changeset/*.md` files. Used on push-to-main to dispatch between `apply-changesets` and `prepare-release`.
+- `matrix`: JSON array of `{module, scala-version}` rows whose `VERSION` file changed in the last commit. Plug into `matrix.include` for the publish job that runs after a Version Packages PR merge.
+- `release-modules`: distinct module names derived from `matrix`. Feed into the per-module `release-tag` job that creates GitHub releases.
+- `changesets-count`: number of pending `.changeset/*.md` files. Use on push-to-main to dispatch between `apply-changesets` (count != 0) and the release pipeline (count == 0).
 - `coordinates`: resolved Maven coordinates for each affected module's snapshot (one per module, not per Scala version — `%%` lets the consumer pick the suffix).
 
-Run on both pull requests and push to main: on PR it gates the test matrix; on push it lets the workflow dispatch between `apply-changesets` and `prepare-release` (see below) via the `changesets-count` output.
+Run on every event. The consumer routes the relevant outputs into the right downstream jobs based on `event_name` and `changesets-count`.
 
 ```yaml
 # .github/workflows/ci.yaml
@@ -123,6 +125,8 @@ jobs:
       SNAPSHOT_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
     outputs:
       affected: ${{ steps.changesets.outputs.affected }}
+      matrix: ${{ steps.changesets.outputs.matrix }}
+      release-modules: ${{ steps.changesets.outputs.release-modules }}
       changesets-count: ${{ steps.changesets.outputs.changesets-count }}
       coordinates: ${{ steps.changesets.outputs.coordinates }}
     steps:
@@ -185,23 +189,14 @@ Bumps `VERSION` files via `changesetVersion` and upserts the **Version Packages*
 
 Pass `extra-command` to chain additional sbt commands after `changesetVersion` in the same sbt invocation — useful for regenerating doc files (e.g. `mdoc`) so they're committed as part of the same version-PR commit.
 
-### `prepare-release` mode
-
-Computes the publish matrix via `changesetMatrix` and emits two outputs:
-
-- `matrix`: JSON array of `{module, scala-version}` rows whose VERSION just changed. Consume as `matrix.include` in the `publish` job.
-- `release-modules`: distinct module names derived from `matrix`. Use for the per-module `release-tag` job that creates GitHub releases.
-
-Run on push to main when `detect.changesets-count == 0` (i.e. the Version Packages PR just merged).
-
 ### Putting it together: release workflow
 
-The two main-branch modes are dispatched by `detect.changesets-count`. The publish job fans out one runner per `(module, Scala version)`; a downstream `release-tag` job creates exactly one GitHub release per module after every Scala-version artifact has been published.
+The push-to-main pipeline is dispatched by `detect.changesets-count`: when there are pending changeset files, `apply-changesets` runs to upsert the Version Packages PR; once that PR is merged, the same `detect` job emits `matrix` / `release-modules`, and `publish` fans out one runner per `(module, Scala version)` followed by `release-tag` creating one GitHub release per module.
 
 ```yaml
 # .github/workflows/ci.yaml (continued)
 jobs:
-  # ...detect, test, snapshot from above...
+  # ...detect, validate, snapshot-comment from above...
 
   apply-changesets:
     needs: detect
@@ -217,30 +212,15 @@ jobs:
           # Optional: regenerate docs as part of the same version-PR commit.
           extra-command: mdoc
 
-  prepare-release:
-    needs: detect
-    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0'
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.changesets.outputs.matrix }}
-      release-modules: ${{ steps.changesets.outputs.release-modules }}
-    steps:
-      - uses: actions/checkout@@v4
-        with: { fetch-depth: 0 }
-      - id: changesets
-        uses: alejandrohdezma/sbt-changesets@AT_VERSION@
-        with:
-          mode: prepare-release
-
   publish:
-    needs: prepare-release
-    if: needs.prepare-release.outputs.matrix != '[]'
+    needs: detect
+    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0' && needs.detect.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 16
       matrix:
-        include: ${{ fromJson(needs.prepare-release.outputs.matrix) }}
+        include: ${{ fromJson(needs.detect.outputs.matrix) }}
     env:
       RELEASE: "true"
     steps:
@@ -249,15 +229,15 @@ jobs:
       - run: sbt "++${{ matrix.scala-version }} ${{ matrix.module }}/publish"
 
   release-tag:
-    needs: [prepare-release, publish]
-    if: needs.prepare-release.outputs.release-modules != '[]'
+    needs: [detect, publish]
+    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0' && needs.detect.outputs.release-modules != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        module: ${{ fromJson(needs.prepare-release.outputs.release-modules) }}
+        module: ${{ fromJson(needs.detect.outputs.release-modules) }}
     steps:
       - uses: actions/checkout@@v4
 
@@ -282,7 +262,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `mode` | yes | — | `detect`, `apply-changesets`, `prepare-release`, or `snapshot-comment` |
+| `mode` | yes | — | `detect`, `apply-changesets`, or `snapshot-comment` |
 | `github-token` | no | `github.token` | GitHub token for API operations |
 | `error-help-url` | no | — | URL shown on changeset validation failure |
 | `skip-validation` | no | `false` | Skip changeset validation in `detect` mode while still computing affected modules |
@@ -294,9 +274,9 @@ jobs:
 
 | Output | Modes | Description |
 |---|---|---|
-| `affected` | `detect` | JSON array of `{module, scala-version}` rows. Consume as `matrix.include` |
+| `affected` | `detect` | JSON array of `{module, scala-version}` rows for PR validation. Consume as `matrix.include` |
 | `affected-modules` | `detect` | JSON array of distinct affected module names |
+| `matrix` | `detect` | JSON array of `{module, scala-version}` rows to publish after a Version Packages PR merge. Consume as `matrix.include` |
+| `release-modules` | `detect` | JSON array of distinct module names being released |
 | `changesets-count` | `detect` | Number of pending `.changeset/*.md` files |
 | `coordinates` | `detect` | JSON array of `{module, version, coordinate}` snapshot coordinates |
-| `matrix` | `prepare-release` | JSON array of `{module, scala-version}` rows to publish. Consume as `matrix.include` |
-| `release-modules` | `prepare-release` | JSON array of distinct module names being released |
