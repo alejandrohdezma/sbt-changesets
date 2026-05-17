@@ -86,20 +86,30 @@ object Commands {
 
   val changesetAffected: Command = Command.command(
     "changesetAffected",
-    "Validates changesets and outputs affected module names as JSON.",
+    "Validates changesets and outputs affected (module, scala-version) rows as JSON.",
     """|First validates that every changed module has a corresponding entry in a
        |.changeset/*.md file. Then writes a JSON array to target/changeset/affected.json
-       |containing the names of all modules referenced by `.changeset/*.md` files or
-       |with changed files (compared to the base branch), plus their transitive
-       |dependents in the internal dependency graph.
+       |with one entry per (module, scala-version) pair, where module is any module
+       |referenced by `.changeset/*.md` files or with changed files (compared to the
+       |base branch) — plus its transitive dependents in the internal dependency
+       |graph — and scala-version iterates over the module's `crossScalaVersions`.
+       |
+       |Output format:
+       |
+       |  [
+       |    { "module": "module-a", "scala-version": "2.13.18" },
+       |    { "module": "module-a", "scala-version": "3.3.7" },
+       |    { "module": "module-b", "scala-version": "3.3.7" }
+       |  ]
        |
        |Fails the build if any modules are missing changeset entries.
        |Set CHANGESET_SKIP_VALIDATION=true to skip validation while still
        |computing affected modules.
-       |Suitable as input for a GitHub Actions matrix strategy.""".stripMargin
+       |Suitable as input for a GitHub Actions `matrix.include` strategy.""".stripMargin
   ) { state =>
-    val base    = Project.extract(state).get(ThisBuild / baseDirectory)
-    val modules = ModuleMetadata.from(state)
+    val extracted = Project.extract(state)
+    val base      = extracted.get(ThisBuild / baseDirectory)
+    val modules   = ModuleMetadata.from(state)
 
     val changed     = changedModules(state)
     val moduleNames = extractModuleNames(state)
@@ -127,13 +137,26 @@ object Commands {
     val seed     = changed ++ changesets.keys
     val affected = seed ++ seed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
 
-    val json = Json.arr(affected.toList.sorted: _*)
+    val refsByName = extracted.structure.allProjectRefs
+      .filter(ref => extracted.get(ref / packageIsModule))
+      .map(ref => extracted.get(ref / Keys.name) -> ref)
+      .toMap
+
+    val rows = affected.toList.sorted.flatMap { name =>
+      refsByName.get(name).toList.flatMap { ref =>
+        extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
+          Json.obj("module" := name, "scala-version" := sv)
+        }
+      }
+    }
+
+    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
 
     val file = base / "target" / "changeset" / "affected.json"
 
     IO.write(file, json.show())
 
-    state.log.info(s"Wrote affected modules to ${Colors.path(file)}")
+    state.log.info(s"Wrote affected (module, scala-version) rows to ${Colors.path(file)}")
 
     state
   }
@@ -230,15 +253,25 @@ object Commands {
 
   val changesetMatrix: Command = Command.command(
     "changesetMatrix",
-    "Outputs JSON array of module names whose VERSION changed in the last commit.",
+    "Outputs JSON array of {module, scala-version} rows whose VERSION changed in the last commit.",
     """|Detects which modules need publishing by running git diff on the last commit
-       |and writes a JSON string array to target/changeset/matrix.json containing
-       |the names of every module whose VERSION file was modified.
+       |and writes a JSON array to target/changeset/matrix.json with one entry per
+       |(module, scala-version) pair, where module is any module whose VERSION file
+       |was modified and scala-version iterates over the module's `crossScalaVersions`.
        |
-       |Suitable as input for a GitHub Actions matrix strategy where each cell runs
-       |`sbt "+<module>/publish"` to cross-build the module internally.""".stripMargin
+       |Output format:
+       |
+       |  [
+       |    { "module": "module-a", "scala-version": "2.13.18" },
+       |    { "module": "module-a", "scala-version": "3.3.7" },
+       |    { "module": "module-b", "scala-version": "3.3.7" }
+       |  ]
+       |
+       |Suitable as input for a GitHub Actions `matrix.include` strategy where each
+       |cell runs `sbt "++<scala-version> <module>/publish"`.""".stripMargin
   ) { state =>
-    val base = Project.extract(state).get(ThisBuild / baseDirectory)
+    val extracted = Project.extract(state)
+    val base      = extracted.get(ThisBuild / baseDirectory)
 
     val diff = Process(Seq("git", "diff", "--name-only", "HEAD~1", "--", "modules/*/VERSION"), base).!!.trim
 
@@ -247,11 +280,20 @@ object Commands {
       .flatMap(_.stripPrefix("modules/").split("/").headOption)
       .toSet
 
-    val moduleNames = extractModuleNames(state)
+    val refsByName = extracted.structure.allProjectRefs
+      .filter(ref => extracted.get(ref / packageIsModule))
+      .map(ref => extracted.get(ref / Keys.name) -> ref)
+      .toMap
 
-    val rows = changed.intersect(moduleNames).toList.sorted
+    val rows = changed.intersect(refsByName.keySet).toList.sorted.flatMap { name =>
+      refsByName.get(name).toList.flatMap { ref =>
+        extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
+          Json.obj("module" := name, "scala-version" := sv)
+        }
+      }
+    }
 
-    val json = Json.arr(rows: _*)
+    val json = Json.arr(rows: _*)(DummyImplicit.dummyImplicit)
 
     val file = base / "target" / "changeset" / "matrix.json"
 

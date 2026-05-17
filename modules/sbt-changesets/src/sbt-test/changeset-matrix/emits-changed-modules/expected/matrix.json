@@ -1,4 +1,14 @@
 [
-  "module-a",
-  "module-b"
+  {
+    "module": "module-a",
+    "scala-version": "2.13.18"
+  },
+  {
+    "module": "module-a",
+    "scala-version": "3.3.7"
+  },
+  {
+    "module": "module-b",
+    "scala-version": "3.3.7"
+  }
 ]

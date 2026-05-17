@@ -36,8 +36,11 @@ inputs:
 
 outputs:
   affected:
-    description: "JSON array of affected module names (only set when mode is 'detect')"
+    description: "JSON array of `{module, scala-version}` objects — one row per affected module / Scala version pair. Consume directly as a GitHub Actions `matrix.include`. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.affected }}
+  affected-modules:
+    description: "JSON array of distinct affected module names, derived from the `affected` matrix. Useful for empty-set gating, snapshot coordinate resolution, or any per-module (rather than per-Scala-version) step. (only set when mode is 'detect')"
+    value: ${{ steps.detect.outputs.affected-modules }}
   changesets-count:
     description: "Number of pending .changeset/*.md files (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.changesets-count }}
@@ -45,17 +48,26 @@ outputs:
     description: "JSON array of resolved snapshot coordinates for the affected modules (only set when mode is 'detect'; uses SNAPSHOT_SUFFIX env var if set)"
     value: ${{ steps.detect.outputs.coordinates }}
   matrix:
-    description: "JSON string array of module names for matrix publishing (only set when mode is 'prepare-release')"
+    description: "JSON array of `{module, scala-version}` rows to publish — one row per (module, Scala version) pair whose VERSION changed in the last commit. Consume directly as a GitHub Actions `matrix.include`. (only set when mode is 'prepare-release')"
     value: ${{ steps.matrix.outputs.matrix }}
+  release-modules:
+    description: "JSON array of distinct module names being released, derived from the `matrix` output. Use for the per-module GH-release-creation job. (only set when mode is 'prepare-release')"
+    value: ${{ steps.matrix.outputs.release-modules }}
 
 runs:
   using: composite
   steps:
     # ─── Detect mode ─────────────────────────────
     # Validates that every changed module has a corresponding .changeset/*.md entry,
-    # then emits the affected modules (changed + transitive dependents), the count of
-    # pending changeset files, and resolved snapshot coordinates (uses the
-    # SNAPSHOT_SUFFIX env var when set; otherwise a memoised JVM timestamp).
+    # then emits:
+    #   - `affected`: JSON array of `{module, scala-version}` rows (changed + transitive
+    #     dependents, expanded over each module's `crossScalaVersions`) — consume as
+    #     `matrix.include` in the test/snapshot job.
+    #   - `affected-modules`: distinct module names derived from `affected`. Useful for
+    #     empty-set gating and per-module steps.
+    #   - `changesets-count`: number of pending `.changeset/*.md` files.
+    #   - `coordinates`: resolved snapshot coordinates per affected module (uses the
+    #     SNAPSHOT_SUFFIX env var when set; otherwise a memoised JVM timestamp).
     # Run on pull requests to gate the test matrix, on push to main to dispatch
     # between `apply-changesets` and `prepare-release`, and to feed the
     # `snapshot-comment` mode with pre-resolved coordinates.
@@ -76,8 +88,11 @@ runs:
         AFFECTED=$(jq -c . target/changeset/affected.json)
         echo "affected=$AFFECTED" >> "$GITHUB_OUTPUT"
 
-        if [ "$AFFECTED" != "[]" ]; then
-          MODULES=$(echo "$AFFECTED" | jq -r '.[]' | tr '\n' ' ')
+        AFFECTED_MODULES=$(echo "$AFFECTED" | jq -c '[.[].module] | unique')
+        echo "affected-modules=$AFFECTED_MODULES" >> "$GITHUB_OUTPUT"
+
+        if [ "$AFFECTED_MODULES" != "[]" ]; then
+          MODULES=$(echo "$AFFECTED_MODULES" | jq -r '.[]' | tr '\n' ' ')
           sbt "extractSnapshotCoordinates $MODULES"
           echo "coordinates=$(jq -c . target/changeset/snapshot-coordinates.json)" >> "$GITHUB_OUTPUT"
         fi
@@ -120,8 +135,12 @@ runs:
         github-token: ${{ inputs.github-token }}
 
     # ─── Prepare-release ─────────────────────────
-    # Emits a JSON array of module names whose VERSION changed in the last
-    # commit, suitable for a downstream matrix publish job.
+    # Emits:
+    #   - `matrix`: JSON array of `{module, scala-version}` rows whose VERSION
+    #     changed in the last commit — consume as `matrix.include` in the
+    #     publish job to fan out one runner per (module, Scala version).
+    #   - `release-modules`: distinct module names derived from `matrix`. Feed
+    #     into the per-module GH-release-creation job.
     # Run after the "Version Packages" PR is merged to main.
 
     - name: Compute publish matrix
@@ -130,7 +149,11 @@ runs:
       shell: bash
       run: |
         sbt changesetMatrix
-        echo "matrix=$(jq -c . target/changeset/matrix.json)" >> "$GITHUB_OUTPUT"
+        MATRIX=$(jq -c . target/changeset/matrix.json)
+        echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+        RELEASE_MODULES=$(echo "$MATRIX" | jq -c '[.[].module] | unique')
+        echo "release-modules=$RELEASE_MODULES" >> "$GITHUB_OUTPUT"
 
     # ─── Snapshot-comment ────────────────────────
     # Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix

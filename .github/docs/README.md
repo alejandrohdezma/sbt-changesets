@@ -25,11 +25,11 @@ Each module in your build has a `VERSION` file and a `CHANGELOG.md`. Instead of 
 | Command | Description |
 |---|---|
 | `changesetAdd <bump> <description>` | Create a changeset for changed modules |
-| `changesetAffected` | Validate + output affected modules as JSON |
+| `changesetAffected` | Validate + output affected `(module, scala-version)` rows as JSON |
 | `changesetVersion` | Apply version bumps with cascade through dependency graph |
 | `extractLatestChangelog <module>` | Extract a single module's CHANGELOG body for its current `VERSION` |
 | `extractSnapshotCoordinates <module>...` | Output JSON of resolved snapshot coordinates for the given modules |
-| `changesetMatrix` | Output JSON array of module names whose VERSION changed in last commit |
+| `changesetMatrix` | Output JSON array of `(module, scala-version)` rows whose VERSION changed in last commit |
 | `changesetConfig` | Output module dependency graph as JSON |
 
 </details>
@@ -57,13 +57,21 @@ The first argument is the bump type (`patch`, `minor`, or `major`) and the rest 
 
 ### 2. Validating changesets (CI)
 
-On pull requests, run `changesetAffected` to ensure every modified module has at least one changeset entry and emit `target/changeset/affected.json` — a JSON array of affected module names (including transitive dependents) that you can feed into a CI matrix. It fails if any module is missing coverage or if a description still contains the placeholder text.
+On pull requests, run `changesetAffected` to ensure every modified module has at least one changeset entry and emit `target/changeset/affected.json` — a JSON array of `{module, scala-version}` rows (one per Scala version in the module's `crossScalaVersions`, including transitive dependents) that you can feed into a CI matrix as `matrix.include`. It fails if any module is missing coverage or if a description still contains the placeholder text.
 
-If you need the list of affected modules without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output all affected modules.
+```json
+[
+  { "module": "module-a", "scala-version": "2.13.18" },
+  { "module": "module-a", "scala-version": "3.3.7" },
+  { "module": "module-b", "scala-version": "3.3.7" }
+]
+```
+
+If you need the affected rows without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output all affected rows.
 
 ### 3. Publishing snapshots (CI)
 
-On feature branches, the affected modules from `changesetAffected` feed a CI matrix that publishes each module's snapshot in parallel via `sbt "+<module>/publish"`. The version is the default `<base>-<suffix>-SNAPSHOT` from the module's `VERSION` file (suffix from `SNAPSHOT_SUFFIX` env / sys-prop, else a memoised JVM timestamp).
+On feature branches, the affected rows from `changesetAffected` feed a CI matrix that publishes each `(module, scala-version)` snapshot on its own runner via `sbt "++<scala-version> <module>/publish"`. The version is the default `<base>-<suffix>-SNAPSHOT` from the module's `VERSION` file (suffix from `SNAPSHOT_SUFFIX` env / sys-prop, else a memoised JVM timestamp).
 
 A follow-up job runs `extractSnapshotCoordinates <m1> <m2> ...` to resolve each module's `organization` and snapshot version, write `target/changeset/snapshot-coordinates.json`, and post a PR comment listing the Maven coordinates.
 
@@ -82,9 +90,9 @@ Modules that are only bumped through cascade get auto-generated descriptions lis
 
 ### 5. Publishing releases (CI)
 
-After version bumps are committed, `changesetMatrix` writes `target/changeset/matrix.json` — a JSON string array of changed module names — which feeds a CI matrix that publishes each module on its own runner in parallel. Each cell runs `sbt "+<module>/publish"`, then `extractLatestChangelog <module>` writes the relevant CHANGELOG body that the cell uses as the GitHub release notes.
+After version bumps are committed, `changesetMatrix` writes `target/changeset/matrix.json` — a JSON array of `{module, scala-version}` rows for every (module, Scala version) whose `VERSION` file just changed — which feeds a `publish` matrix that publishes each pair on its own runner in parallel via `sbt "++<scala-version> <module>/publish"`. A downstream `release-tag` job then runs once per distinct module, calls `extractLatestChangelog <module>`, and uses the result as the GitHub release notes.
 
-The composite [GitHub Action](#github-actions) bundles this flow as the `prepare-release` mode (the consumer just adds the matrix job).
+The composite [GitHub Action](#github-actions) bundles this flow as the `prepare-release` mode, which emits both `matrix` (for `publish`) and `release-modules` (for `release-tag`).
 
 ## GitHub Actions
 
@@ -92,7 +100,12 @@ This repository also provides a composite GitHub Action that orchestrates the fu
 
 ### `detect` mode
 
-Validates that all changed modules have changeset entries and outputs the list of affected modules (including transitive dependents). Use this on pull requests to gate CI and build a dynamic test matrix.
+Validates that all changed modules have changeset entries and outputs:
+
+- `affected`: JSON array of `{module, scala-version}` rows (changed modules and their transitive dependents, expanded over each module's `crossScalaVersions`). Plug directly into `matrix.include`.
+- `affected-modules`: distinct module names derived from `affected`. Use for empty-set gating and per-module steps.
+- `changesets-count`: number of pending `.changeset/*.md` files. Used on push-to-main to dispatch between `apply-changesets` and `prepare-release`.
+- `coordinates`: resolved Maven coordinates for each affected module's snapshot (one per module, not per Scala version — `%%` lets the consumer pick the suffix).
 
 Run on both pull requests and push to main: on PR it gates the test matrix; on push it lets the workflow dispatch between `apply-changesets` and `prepare-release` (see below) via the `changesets-count` output.
 
@@ -111,7 +124,7 @@ jobs:
     outputs:
       affected: ${{ steps.changesets.outputs.affected }}
       changesets-count: ${{ steps.changesets.outputs.changesets-count }}
-      coordinates: ${{ steps.coordinates.outputs.json }}
+      coordinates: ${{ steps.changesets.outputs.coordinates }}
     steps:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
@@ -122,30 +135,21 @@ jobs:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
 
-      - id: coordinates
-        if: github.event_name == 'pull_request' && steps.changesets.outputs.affected != '[]'
-        env:
-          AFFECTED: ${{ steps.changesets.outputs.affected }}
-        run: |
-          MODULES=$(echo "$AFFECTED" | jq -r '.[]' | tr '\n' ' ')
-          sbt "extractSnapshotCoordinates $MODULES"
-          echo "json=$(jq -c . target/changeset/snapshot-coordinates.json)" >> "$GITHUB_OUTPUT"
-
   validate:
     needs: detect
     if: github.event_name == 'pull_request' && needs.detect.outputs.affected != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: ${{ fromJson(needs.detect.outputs.affected) }}
+        include: ${{ fromJson(needs.detect.outputs.affected) }}
     env:
       SNAPSHOT_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@@v4
 
-      - run: sbt "+${{ matrix.module }}/test"
+      - run: sbt "++${{ matrix.scala-version }} ${{ matrix.module }}/test"
 
-      - run: sbt "+${{ matrix.module }}/publish"
+      - run: sbt "++${{ matrix.scala-version }} ${{ matrix.module }}/publish"
 
   snapshot-comment:
     needs: [detect, validate]
@@ -158,7 +162,7 @@ jobs:
           coordinates: ${{ needs.detect.outputs.coordinates }}
 ```
 
-`SNAPSHOT_SUFFIX` (e.g. `${{ github.run_id }}-${{ github.run_attempt }}`) is set on both `detect` and `validate` so the coordinates resolved up-front in `detect` match the artifacts published by the `validate` matrix. `extractSnapshotCoordinates` reads each module's `organization` from the build, so per-module org overrides (e.g. `com.permutive.metrics`) are respected without any consumer-side hardcoding. Snapshot publishes are intended for private monorepos only — exposing publishing credentials on PRs in public repositories is a security risk.
+`SNAPSHOT_SUFFIX` (e.g. `${{ github.run_id }}-${{ github.run_attempt }}`) is set on both `detect` and `validate` so the coordinates resolved up-front in `detect` match the artifacts published by the `validate` matrix. Because every matrix cell in a single workflow run shares the same `SNAPSHOT_SUFFIX`, the per-Scala-version publishes that make up one module produce consistent versions. `extractSnapshotCoordinates` (run by the action in `detect` mode) reads each module's `organization` from the build, so per-module org overrides (e.g. `com.permutive.metrics`) are respected without any consumer-side hardcoding. Snapshot publishes are intended for private monorepos only — exposing publishing credentials on PRs in public repositories is a security risk.
 
 ### `snapshot-comment` mode
 
@@ -183,11 +187,16 @@ Pass `extra-command` to chain additional sbt commands after `changesetVersion` i
 
 ### `prepare-release` mode
 
-Computes the per-module publish matrix via `changesetMatrix` and emits the JSON to the action's `matrix` output. Run on push to main when `detect.changesets-count == 0` (i.e. the Version Packages PR just merged).
+Computes the publish matrix via `changesetMatrix` and emits two outputs:
+
+- `matrix`: JSON array of `{module, scala-version}` rows whose VERSION just changed. Consume as `matrix.include` in the `publish` job.
+- `release-modules`: distinct module names derived from `matrix`. Use for the per-module `release-tag` job that creates GitHub releases.
+
+Run on push to main when `detect.changesets-count == 0` (i.e. the Version Packages PR just merged).
 
 ### Putting it together: release workflow
 
-The two main-branch modes are dispatched by `detect.changesets-count`. The matrix publish job fans out one runner per affected module.
+The two main-branch modes are dispatched by `detect.changesets-count`. The publish job fans out one runner per `(module, Scala version)`; a downstream `release-tag` job creates exactly one GitHub release per module after every Scala-version artifact has been published.
 
 ```yaml
 # .github/workflows/ci.yaml (continued)
@@ -214,6 +223,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.changesets.outputs.matrix }}
+      release-modules: ${{ steps.changesets.outputs.release-modules }}
     steps:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
@@ -222,7 +232,7 @@ jobs:
         with:
           mode: prepare-release
 
-  release:
+  publish:
     needs: prepare-release
     if: needs.prepare-release.outputs.matrix != '[]'
     runs-on: ubuntu-latest
@@ -230,14 +240,29 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix:
-        module: ${{ fromJson(needs.prepare-release.outputs.matrix) }}
+        include: ${{ fromJson(needs.prepare-release.outputs.matrix) }}
     env:
       RELEASE: "true"
     steps:
       - uses: actions/checkout@@v4
 
-      - name: Publish and extract changelog
-        run: sbt "+${{ matrix.module }}/publish; extractLatestChangelog ${{ matrix.module }}"
+      - run: sbt "++${{ matrix.scala-version }} ${{ matrix.module }}/publish"
+
+  release-tag:
+    needs: [prepare-release, publish]
+    if: needs.prepare-release.outputs.release-modules != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.prepare-release.outputs.release-modules) }}
+    steps:
+      - uses: actions/checkout@@v4
+
+      - name: Extract changelog
+        run: sbt "extractLatestChangelog ${{ matrix.module }}"
 
       - name: Create GitHub release
         env:
@@ -250,6 +275,8 @@ jobs:
             --notes-file target/changeset/changelog.md \
             --target main
 ```
+
+`release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because re-publishing the same `RELEASE` version to a Maven repo is rejected, surfacing the partial-state.
 
 ### Inputs
 
@@ -267,6 +294,9 @@ jobs:
 
 | Output | Modes | Description |
 |---|---|---|
-| `affected` | `detect` | JSON array of affected module names |
+| `affected` | `detect` | JSON array of `{module, scala-version}` rows. Consume as `matrix.include` |
+| `affected-modules` | `detect` | JSON array of distinct affected module names |
 | `changesets-count` | `detect` | Number of pending `.changeset/*.md` files |
-| `matrix` | `prepare-release` | JSON string array of module names to publish |
+| `coordinates` | `detect` | JSON array of `{module, version, coordinate}` snapshot coordinates |
+| `matrix` | `prepare-release` | JSON array of `{module, scala-version}` rows to publish. Consume as `matrix.include` |
+| `release-modules` | `prepare-release` | JSON array of distinct module names being released |
