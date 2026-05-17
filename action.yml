@@ -59,8 +59,11 @@ outputs:
     description: "JSON array of `{module, scala-version}` rows to publish — one row per (module, Scala version) pair whose VERSION changed in the last commit. Consume directly as a GitHub Actions `matrix.include`. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.matrix }}
   release-modules:
-    description: "JSON array of `{module, changelog}` rows — one per distinct module being released. The `changelog` field is the matching `## <version>` body from the module's CHANGELOG.md. Feed into the release-tag job so it can create GitHub releases without booting sbt. (only set when mode is 'detect')"
+    description: "JSON array of `{module, version, changelog}` rows — one per distinct module being released. Lets the release-tag job create GitHub releases via `gh release create` without booting sbt or even checking out the working tree. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.release-modules }}
+  stage:
+    description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with VERSION bumps to publish). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
+    value: ${{ steps.detect.outputs.stage }}
 
 runs:
   using: composite
@@ -76,16 +79,18 @@ runs:
     #   - `matrix`: JSON array of `{module, scala-version}` rows whose VERSION changed
     #     in the last commit — consume as `matrix.include` in the publish job that runs
     #     after a Version Packages PR merge.
-    #   - `release-modules`: JSON array of `{module, changelog}` rows for the
+    #   - `release-modules`: JSON array of `{module, version, changelog}` rows for the
     #     distinct modules being released. Lets the release-tag job create GitHub
     #     releases without booting sbt. Hard-fails if the serialised payload exceeds
     #     400 KB UTF-8 (~800 KB UTF-16), well under GitHub's 1 MB per-job output cap.
-    #   - `changesets-count`: number of pending `.changeset/*.md` files. Use to
-    #     dispatch between `apply-changesets` (count != 0) and the release pipeline
-    #     (count == 0) on push-to-main.
+    #   - `changesets-count`: number of pending `.changeset/*.md` files.
     #   - `coordinates`: resolved snapshot coordinates per affected module (uses the
     #     SNAPSHOT_SUFFIX env var when set; otherwise a memoised JVM timestamp). Used
     #     by `snapshot-comment` mode.
+    #   - `stage`: single dispatch classification — `validate` (PR with affected
+    #     modules), `apply-changesets` (push with pending changesets), `release`
+    #     (push with VERSION bumps), or empty. Consumers gate every downstream job
+    #     on this single value rather than re-encoding event_name + counts + matrix.
     # Run on every event; the consumer routes outputs into validate / snapshot-comment
     # (PR) and apply-changesets / publish / release-tag (push to main).
 
@@ -141,6 +146,17 @@ runs:
 
         COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
         echo "changesets-count=$COUNT" >> "$GITHUB_OUTPUT"
+
+        if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ "$AFFECTED" != "[]" ]; then
+          STAGE="validate"
+        elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$COUNT" != "0" ]; then
+          STAGE="apply-changesets"
+        elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$MATRIX" != "[]" ]; then
+          STAGE="release"
+        else
+          STAGE=""
+        fi
+        echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
 
     # ─── Apply-changesets ────────────────────────
     # Bumps VERSION files (via `changesetVersion`) and upserts the

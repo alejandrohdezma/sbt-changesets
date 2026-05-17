@@ -106,10 +106,11 @@ Validates that all changed modules have changeset entries and outputs everything
 - `affected-modules`: distinct module names derived from `affected`. Use for empty-set gating and per-module steps.
 - `matrix`: JSON array of `{module, scala-version}` rows whose `VERSION` file changed in the last commit. Plug into `matrix.include` for the publish job that runs after a Version Packages PR merge.
 - `release-modules`: JSON array of `{module, version, changelog}` rows — one per distinct module being released. Lets the `release-tag` job create GitHub releases as pure `gh` API calls — no sbt, no checkout. Hard-fails the action if the serialised payload exceeds 400 KB UTF-8 (≈ 800 KB UTF-16, well under GitHub's 1 MB per-job output cap) — if you hit it, reduce changelog verbosity or split the release.
-- `changesets-count`: number of pending `.changeset/*.md` files. Use on push-to-main to dispatch between `apply-changesets` (count != 0) and the release pipeline (count == 0).
+- `changesets-count`: number of pending `.changeset/*.md` files. Informational; the workflow dispatches on `stage` rather than this directly.
 - `coordinates`: resolved Maven coordinates for each affected module's snapshot (one per module, not per Scala version — `%%` lets the consumer pick the suffix).
+- `stage`: a single dispatch classification — `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changesets), `release` (push-to-main with VERSION bumps to publish), or empty (nothing to do). Use as the single gating condition for every downstream job.
 
-Run on every event. The consumer routes the relevant outputs into the right downstream jobs based on `event_name` and `changesets-count`.
+Run on every event. The consumer routes the relevant outputs into the right downstream jobs by gating each on `stage`.
 
 ```yaml
 # .github/workflows/ci.yaml
@@ -127,8 +128,8 @@ jobs:
       affected: ${{ steps.changesets.outputs.affected }}
       matrix: ${{ steps.changesets.outputs.matrix }}
       release-modules: ${{ steps.changesets.outputs.release-modules }}
-      changesets-count: ${{ steps.changesets.outputs.changesets-count }}
       coordinates: ${{ steps.changesets.outputs.coordinates }}
+      stage: ${{ steps.changesets.outputs.stage }}
     steps:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
@@ -141,7 +142,7 @@ jobs:
 
   validate:
     needs: detect
-    if: github.event_name == 'pull_request' && needs.detect.outputs.affected != '[]'
+    if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -157,7 +158,7 @@ jobs:
 
   snapshot-comment:
     needs: [detect, validate]
-    if: github.event_name == 'pull_request' && needs.detect.outputs.affected != '[]'
+    if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
       - uses: alejandrohdezma/sbt-changesets@AT_VERSION@
@@ -196,7 +197,7 @@ Loops over the `release-modules` array (as produced by `detect`) and creates one
 ```yaml
   release-tag:
     needs: [detect, publish]
-    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0' && needs.detect.outputs.release-modules != '[]'
+    if: needs.detect.outputs.stage == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -211,7 +212,7 @@ Optionally pass `target` to override the branch the releases point at (defaults 
 
 ### Putting it together: release workflow
 
-The push-to-main pipeline is dispatched by `detect.changesets-count`: when there are pending changeset files, `apply-changesets` runs to upsert the Version Packages PR; once that PR is merged, the same `detect` job emits `matrix` / `release-modules`, and `publish` fans out one runner per `(module, Scala version)` followed by `release-tag` creating one GitHub release per module.
+The push-to-main pipeline is dispatched by `detect.outputs.stage`: when there are pending changeset files `stage` is `apply-changesets` and the version-bump job runs; once that PR is merged `stage` becomes `release`, `publish` fans out one runner per `(module, Scala version)`, and `release-tag` creates one GitHub release per module.
 
 ```yaml
 # .github/workflows/ci.yaml (continued)
@@ -220,7 +221,7 @@ jobs:
 
   apply-changesets:
     needs: detect
-    if: github.event_name == 'push' && needs.detect.outputs.changesets-count != '0'
+    if: needs.detect.outputs.stage == 'apply-changesets'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@@v4
@@ -234,7 +235,7 @@ jobs:
 
   publish:
     needs: detect
-    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0' && needs.detect.outputs.matrix != '[]'
+    if: needs.detect.outputs.stage == 'release'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -250,7 +251,7 @@ jobs:
 
   release-tag:
     needs: [detect, publish]
-    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0' && needs.detect.outputs.release-modules != '[]'
+    if: needs.detect.outputs.stage == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -289,3 +290,4 @@ A single job replaces the per-module matrix: `gh release create` is a sub-second
 | `release-modules` | `detect` | JSON array of `{module, version, changelog}` rows — one per distinct module being released. Feed into `gh release create` |
 | `changesets-count` | `detect` | Number of pending `.changeset/*.md` files |
 | `coordinates` | `detect` | JSON array of `{module, version, coordinate}` snapshot coordinates |
+| `stage` | `detect` | Dispatch classification: `validate`, `apply-changesets`, `release`, or empty. Gate every downstream job on this |
