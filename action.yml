@@ -7,7 +7,7 @@ branding:
 
 inputs:
   mode:
-    description: "'detect' to validate changesets and output affected modules and pending changeset count, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'prepare-release' to compute the per-module publish matrix, 'snapshot-comment' to post a PR comment listing snapshot coordinates"
+    description: "'detect' to validate changesets and emit the test/publish matrices, snapshot coordinates, and pending changeset count, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'snapshot-comment' to post a PR comment listing snapshot coordinates, 'release-tag' to create one GitHub release per row in `release-modules`"
     required: true
   github-token:
     description: "GitHub token for API operations (defaults to github.token)"
@@ -22,43 +22,50 @@ inputs:
     required: false
     default: "false"
   extra-command:
-    description: "Optional sbt command(s) to chain after `changesetVersion` in 'apply-changesets' mode. Useful for regenerating doc files (e.g. `documentation/mdoc`) so they get committed as part of the version PR. Use `;` to chain multiple commands."
+    description: "Optional sbt command(s) to chain after `changesetVersion` in 'apply-changesets' mode. Useful for regenerating doc files (e.g. `mdoc`) so they get committed as part of the version PR. Use `;` to chain multiple commands."
     required: false
     default: ""
-  coordinates:
-    description: "JSON array of snapshot coordinates as produced by `extractSnapshotCoordinates` (only used in 'snapshot-comment' mode). Each element should be `{module, version, coordinate}`."
+  matrix:
+    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinate`) and `release-tag` (release-stage rows with `version` and `changelog`)."
     required: false
     default: ""
   pr-number:
     description: "PR number to comment on in 'snapshot-comment' mode (defaults to github.event.pull_request.number)"
     required: false
     default: ${{ github.event.pull_request.number }}
+  target:
+    description: "Branch (or commit SHA) to target for the created GitHub releases (only used in 'release-tag' mode)"
+    required: false
+    default: main
 
 outputs:
-  affected:
-    description: "JSON array of affected module names (only set when mode is 'detect')"
-    value: ${{ steps.detect.outputs.affected }}
-  changesets-count:
-    description: "Number of pending .changeset/*.md files (only set when mode is 'detect')"
-    value: ${{ steps.detect.outputs.changesets-count }}
-  coordinates:
-    description: "JSON array of resolved snapshot coordinates for the affected modules (only set when mode is 'detect'; uses SNAPSHOT_SUFFIX env var if set)"
-    value: ${{ steps.detect.outputs.coordinates }}
   matrix:
-    description: "JSON string array of module names for matrix publishing (only set when mode is 'prepare-release')"
-    value: ${{ steps.matrix.outputs.matrix }}
+    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`). When `stage == 'release'`, an array of `{module, scala-version, version, changelog}` rows (publish-matrix dimensions + release-tag note body). Empty array otherwise. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
+    value: ${{ steps.detect.outputs.matrix }}
+  stage:
+    description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with VERSION bumps to publish). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
+    value: ${{ steps.detect.outputs.stage }}
 
 runs:
   using: composite
   steps:
     # ─── Detect mode ─────────────────────────────
     # Validates that every changed module has a corresponding .changeset/*.md entry,
-    # then emits the affected modules (changed + transitive dependents), the count of
-    # pending changeset files, and resolved snapshot coordinates (uses the
-    # SNAPSHOT_SUFFIX env var when set; otherwise a memoised JVM timestamp).
-    # Run on pull requests to gate the test matrix, on push to main to dispatch
-    # between `apply-changesets` and `prepare-release`, and to feed the
-    # `snapshot-comment` mode with pre-resolved coordinates.
+    # then emits two outputs:
+    #   - `stage`: single dispatch classification — `validate` (PR with affected
+    #     modules), `apply-changesets` (push with pending changesets), `release`
+    #     (push with VERSION bumps), or empty (nothing to do). Consumers gate every
+    #     downstream job on this single value.
+    #   - `matrix`: the work matrix for this run. Shape depends on `stage`:
+    #       - `validate`: `[{module, scala-version, version, coordinate}, ...]` —
+    #         publish-matrix dimensions plus snapshot Maven coordinate for
+    #         `snapshot-comment`.
+    #       - `release`:  `[{module, scala-version, version, changelog}, ...]` —
+    #         publish-matrix dimensions plus release-tag note body.
+    #       - otherwise: `[]`.
+    #     Hard-fails the action when the release-stage payload exceeds 400 KB.
+    # Run on every event; the consumer routes the single matrix into the right
+    # downstream jobs by gating on `stage`.
 
     - name: Detect affected modules
       if: inputs.mode == 'detect'
@@ -67,23 +74,41 @@ runs:
       env:
         CHANGESET_SKIP_VALIDATION: ${{ inputs.skip-validation }}
       run: |
-        sbt changesetAffected || {
-          if [ -n "${{ inputs.error-help-url }}" ]; then
-            echo "See: ${{ inputs.error-help-url }}"
-          fi
-          exit 1
-        }
-        AFFECTED=$(jq -c . target/changeset/affected.json)
-        echo "affected=$AFFECTED" >> "$GITHUB_OUTPUT"
-
-        if [ "$AFFECTED" != "[]" ]; then
-          MODULES=$(echo "$AFFECTED" | jq -r '.[]' | tr '\n' ' ')
-          sbt "extractSnapshotCoordinates $MODULES"
-          echo "coordinates=$(jq -c . target/changeset/snapshot-coordinates.json)" >> "$GITHUB_OUTPUT"
-        fi
-
         COUNT=$(find .changeset -name "*.md" ! -name "README.md" 2>/dev/null | wc -l | tr -d ' ')
-        echo "changesets-count=$COUNT" >> "$GITHUB_OUTPUT"
+        MATRIX="[]"
+        STAGE=""
+
+        case "$GITHUB_EVENT_NAME" in
+          pull_request)
+            sbt "changesetMatrix validate" || {
+              if [ -n "${{ inputs.error-help-url }}" ]; then
+                echo "See: ${{ inputs.error-help-url }}"
+              fi
+              exit 1
+            }
+            MATRIX=$(jq -c . target/changeset/matrix.json)
+            [ "$MATRIX" != "[]" ] && STAGE="validate"
+            ;;
+          push)
+            if [ "$COUNT" != "0" ]; then
+              STAGE="apply-changesets"
+            else
+              sbt "changesetMatrix release"
+              MATRIX=$(jq -c . target/changeset/matrix.json)
+              if [ "$MATRIX" != "[]" ]; then
+                STAGE="release"
+                BYTES=$(printf '%s' "$MATRIX" | wc -c | tr -d ' ')
+                if [ "$BYTES" -gt 400000 ]; then
+                  echo "::error::matrix payload is $BYTES bytes (UTF-8); GitHub Actions job outputs are capped at 1 MB UTF-16 (~500 KB UTF-8). Reduce changelog verbosity or split the release."
+                  exit 1
+                fi
+              fi
+            fi
+            ;;
+        esac
+
+        echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
+        echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
     # ─── Apply-changesets ────────────────────────
     # Bumps VERSION files (via `changesetVersion`) and upserts the
@@ -119,24 +144,11 @@ runs:
         body: ${{ steps.apply-changesets.outputs.body }}
         github-token: ${{ inputs.github-token }}
 
-    # ─── Prepare-release ─────────────────────────
-    # Emits a JSON array of module names whose VERSION changed in the last
-    # commit, suitable for a downstream matrix publish job.
-    # Run after the "Version Packages" PR is merged to main.
-
-    - name: Compute publish matrix
-      if: inputs.mode == 'prepare-release'
-      id: matrix
-      shell: bash
-      run: |
-        sbt changesetMatrix
-        echo "matrix=$(jq -c . target/changeset/matrix.json)" >> "$GITHUB_OUTPUT"
-
     # ─── Snapshot-comment ────────────────────────
     # Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix
-    # snapshot publish. The `coordinates` input is the JSON output of
-    # `extractSnapshotCoordinates`; typically computed once in the same job that runs
-    # the action's `detect` mode and surfaced via `needs.<detect-job>.outputs.coordinates`.
+    # snapshot publish. Consumes the validate-stage `matrix` from `detect` — rows
+    # carry `module`, `scala-version`, `version`, and `coordinate`; this step
+    # dedupes by module so each release is listed once.
 
     - name: Post snapshot coordinates comment
       if: inputs.mode == 'snapshot-comment'
@@ -145,9 +157,9 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         GH_REPO: ${{ github.repository }}
         PR_NUMBER: ${{ inputs.pr-number }}
-        COORDINATES: ${{ inputs.coordinates }}
+        MATRIX: ${{ inputs.matrix }}
       run: |
-        BLOCKS=$(echo "$COORDINATES" | jq -r '.[] | "```scala\n\(.coordinate)\n```"')
+        BLOCKS=$(echo "$MATRIX" | jq -r 'group_by(.module) | map(.[0]) | .[] | "```scala\n\(.coordinate)\n```"')
         BODY_FILE=$(mktemp)
         cat > "$BODY_FILE" <<EOF
         ### Snapshot releases
@@ -160,3 +172,37 @@ runs:
         gh pr comment "$PR_NUMBER" --edit-last --body-file "$BODY_FILE" 2>/dev/null \
           || gh pr comment "$PR_NUMBER" --body-file "$BODY_FILE"
         rm -f "$BODY_FILE"
+
+    # ─── Release-tag ─────────────────────────────
+    # Loops over the release-stage `matrix` (as produced by `detect`) and creates one
+    # GitHub release per distinct module via `gh release create`. Rows carry `module`,
+    # `scala-version`, `version`, and `changelog`; duplicate module rows (from cross-
+    # built modules) become no-ops on the second `gh release view`. Run after the
+    # publish job(s) succeed.
+
+    - name: Create GitHub releases
+      if: inputs.mode == 'release-tag'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        MATRIX: ${{ inputs.matrix }}
+        TARGET: ${{ inputs.target }}
+      run: |
+        for ENTRY in $(jq -c '.[]' <<< "$MATRIX"); do
+          MODULE=$(jq -r .module <<< "$ENTRY")
+          VERSION=$(jq -r .version <<< "$ENTRY")
+          TAG="$MODULE@$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            continue
+          fi
+          BODY_FILE=$(mktemp)
+          jq -r .changelog <<< "$ENTRY" > "$BODY_FILE"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file "$BODY_FILE" \
+            --target "$TARGET"
+          rm -f "$BODY_FILE"
+          echo "Created release: $TAG"
+        done

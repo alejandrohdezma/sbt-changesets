@@ -52,16 +52,24 @@ object ChangesetPlugin extends AutoPlugin {
     val changesetBaseBranch =
       settingKey[String]("Remote branch reference used to detect changed modules (default: origin/main)")
 
+    val changesetCoordinate = settingKey[String](
+      "Maven-style coordinate for this module, used as the `coordinate` field in the validate-stage matrix " +
+        "(consumed by `snapshot-comment`). Defaults to `\"org\" %% \"name\" % \"version\"` for Scala modules " +
+        "and `\"org\" % \"name\" % \"version\"` for Java modules (`crossPaths := false`). Override per-project " +
+        "for test-scoped modules (`... % \"test\"`) or custom artifact shapes."
+    )
+
   }
 
   import autoImport.*
 
   override def projectSettings: Seq[Setting[_]] = Seq(
-    publish / skip := Settings.skipPublish.value,
-    version        := Settings.versionFromFile.value,
-    versionScheme  := Some("early-semver"),
-    homepage       := scmInfo.value.map(_.browseUrl),
-    scmInfo        := Settings.scmInfoFromGit.value
+    publish / skip      := Settings.skipPublish.value,
+    version             := Settings.versionFromFile.value,
+    versionScheme       := Some("early-semver"),
+    homepage            := scmInfo.value.map(_.browseUrl),
+    scmInfo             := Settings.scmInfoFromGit.value,
+    changesetCoordinate := s""""${organization.value}" ${Settings.separator.value} "${name.value}" % "${version.value}""""
   )
 
   override def buildSettings: Seq[Setting[_]] = Seq(
