@@ -212,45 +212,6 @@ object Commands {
     state
   }
 
-  val extractLatestChangelog: Command = Command.single(
-    "extractLatestChangelog",
-    "extractLatestChangelog" -> "Extracts a single module's CHANGELOG body for its current VERSION.",
-    """|Reads `modules/<module>/VERSION`, finds the matching `## <version>` entry in
-       |`modules/<module>/CHANGELOG.md`, and writes its body to
-       |`target/changeset/changelog.md`.
-       |
-       |Intended for the per-module matrix release flow: each cell calls this and
-       |feeds the file into `gh release create --notes-file`.""".stripMargin
-  ) { (state, name) =>
-    val base = Project.extract(state).get(ThisBuild / baseDirectory)
-    val dir  = base / "modules" / name
-
-    if (!dir.isDirectory) {
-      state.log.error(s"Module directory not found for ${Colors.module(name)}: ${Colors.path(dir)}")
-      throw new MessageOnlyException(s"Module directory not found: ${dir.getAbsolutePath}")
-    }
-
-    val versionFile = dir / "VERSION"
-    if (!versionFile.exists()) {
-      state.log.error(s"Missing VERSION file for ${Colors.module(name)}: ${Colors.path(versionFile)}")
-      throw new MessageOnlyException(
-        s"Missing VERSION file for module '$name' at ${versionFile.getAbsolutePath}"
-      )
-    }
-
-    val version = IO.read(versionFile).trim
-    val body    = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", version)
-
-    val file = base / "target" / "changeset" / "changelog.md"
-    IO.write(file, body)
-
-    state.log.info {
-      s"Extracted changelog for ${Colors.module(name)}@${Colors.version(version)} -> ${Colors.path(file)}"
-    }
-
-    state
-  }
-
   val changesetMatrix: Command = Command.command(
     "changesetMatrix",
     "Outputs JSON array of {module, scala-version} rows whose VERSION changed in the last commit.",
@@ -504,8 +465,8 @@ object Commands {
     }
   }
 
-  val all: Seq[Command] = Seq(changesetConfig, changesetAffected, changesetVersion, extractLatestChangelog,
-    extractSnapshotCoordinates, extractChangelogs, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
+  val all: Seq[Command] = Seq(changesetConfig, changesetAffected, changesetVersion, extractSnapshotCoordinates,
+    extractChangelogs, changesetMatrix, changesetAdd, changesetFromDependencyDiff)
 
   // ─── Internal helpers ─────────────────────────
 
