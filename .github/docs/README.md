@@ -189,6 +189,26 @@ Bumps `VERSION` files via `changesetVersion` and upserts the **Version Packages*
 
 Pass `extra-command` to chain additional sbt commands after `changesetVersion` in the same sbt invocation — useful for regenerating doc files (e.g. `mdoc`) so they're committed as part of the same version-PR commit.
 
+### `release-tag` mode
+
+Loops over the `release-modules` array (as produced by `detect`) and creates one GitHub release per row — `module@version` as the tag and title, `changelog` as the notes body. Each entry is self-contained, so this mode needs no sbt and no checkout — pure `gh` API calls. Existing tags are skipped, making reruns idempotent.
+
+```yaml
+  release-tag:
+    needs: [detect, publish]
+    if: github.event_name == 'push' && needs.detect.outputs.changesets-count == '0' && needs.detect.outputs.release-modules != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: alejandrohdezma/sbt-changesets@AT_VERSION@
+        with:
+          mode: release-tag
+          release-modules: ${{ needs.detect.outputs.release-modules }}
+```
+
+Optionally pass `target` to override the branch the releases point at (defaults to `main`).
+
 ### Putting it together: release workflow
 
 The push-to-main pipeline is dispatched by `detect.changesets-count`: when there are pending changeset files, `apply-changesets` runs to upsert the Version Packages PR; once that PR is merged, the same `detect` job emits `matrix` / `release-modules`, and `publish` fans out one runner per `(module, Scala version)` followed by `release-tag` creating one GitHub release per module.
@@ -235,46 +255,29 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Create GitHub releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASES: ${{ needs.detect.outputs.release-modules }}
-        run: |
-          for ENTRY in $(jq -c '.[]' <<< "$RELEASES"); do
-            MODULE=$(jq -r .module <<< "$ENTRY")
-            VERSION=$(jq -r .version <<< "$ENTRY")
-            TAG="$MODULE@$VERSION"
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              echo "Release $TAG already exists; skipping."
-              continue
-            fi
-            BODY_FILE=$(mktemp)
-            jq -r .changelog <<< "$ENTRY" > "$BODY_FILE"
-            gh release create "$TAG" \
-              --title "$TAG" \
-              --notes-file "$BODY_FILE" \
-              --target main
-            rm -f "$BODY_FILE"
-            echo "Created release: $TAG"
-          done
+      - uses: alejandrohdezma/sbt-changesets@AT_VERSION@
+        with:
+          mode: release-tag
+          release-modules: ${{ needs.detect.outputs.release-modules }}
 ```
 
-`release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because the loop skips tags that already exist; new tags get created as expected.
+`release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because the action's loop skips tags that already exist; new tags get created as expected.
 
-A single job with a loop replaces the per-module matrix: `gh release create` is a sub-second API call, so paying a per-cell runner setup wasn't earning any parallelism. Each `release-modules` row carries `module`, `version`, and `changelog` inline, so `release-tag` runs without sbt and without checkout — pure `gh` API calls.
+A single job replaces the per-module matrix: `gh release create` is a sub-second API call, so paying a per-cell runner setup wasn't earning any parallelism. Each `release-modules` row carries `module`, `version`, and `changelog` inline, so `release-tag` runs without sbt and without checkout — pure `gh` API calls.
 
 ### Inputs
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `mode` | yes | — | `detect`, `apply-changesets`, or `snapshot-comment` |
+| `mode` | yes | — | `detect`, `apply-changesets`, `snapshot-comment`, or `release-tag` |
 | `github-token` | no | `github.token` | GitHub token for API operations |
 | `error-help-url` | no | — | URL shown on changeset validation failure |
 | `skip-validation` | no | `false` | Skip changeset validation in `detect` mode while still computing affected modules |
 | `extra-command` | no | — | sbt command(s) chained after `changesetVersion` in `apply-changesets` mode (e.g. `documentation/mdoc`) |
 | `coordinates` | no | — | JSON array of snapshot coordinates consumed by `snapshot-comment` mode |
 | `pr-number` | no | `github.event.pull_request.number` | PR number to comment on in `snapshot-comment` mode |
+| `release-modules` | no | — | JSON array of `{module, version, changelog}` rows consumed by `release-tag` mode |
+| `target` | no | `main` | Branch / commit SHA to target for the GitHub releases created by `release-tag` mode |
 
 ### Outputs
 

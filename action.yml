@@ -7,7 +7,7 @@ branding:
 
 inputs:
   mode:
-    description: "'detect' to validate changesets and emit the test/publish matrices, snapshot coordinates, and pending changeset count, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'snapshot-comment' to post a PR comment listing snapshot coordinates"
+    description: "'detect' to validate changesets and emit the test/publish matrices, snapshot coordinates, and pending changeset count, 'apply-changesets' to bump versions and upsert the 'Version Packages' PR, 'snapshot-comment' to post a PR comment listing snapshot coordinates, 'release-tag' to create one GitHub release per row in `release-modules`"
     required: true
   github-token:
     description: "GitHub token for API operations (defaults to github.token)"
@@ -33,6 +33,14 @@ inputs:
     description: "PR number to comment on in 'snapshot-comment' mode (defaults to github.event.pull_request.number)"
     required: false
     default: ${{ github.event.pull_request.number }}
+  release-modules:
+    description: "JSON array of `{module, version, changelog}` rows as produced by the `detect` mode's `release-modules` output (only used in 'release-tag' mode)"
+    required: false
+    default: ""
+  target:
+    description: "Branch (or commit SHA) to target for the created GitHub releases (only used in 'release-tag' mode)"
+    required: false
+    default: main
 
 outputs:
   affected:
@@ -196,3 +204,37 @@ runs:
         gh pr comment "$PR_NUMBER" --edit-last --body-file "$BODY_FILE" 2>/dev/null \
           || gh pr comment "$PR_NUMBER" --body-file "$BODY_FILE"
         rm -f "$BODY_FILE"
+
+    # ─── Release-tag ─────────────────────────────
+    # Loops over `release-modules` (as produced by `detect`) and creates one GitHub
+    # release per row via `gh release create`. Each row carries `module`, `version`,
+    # and `changelog`, so this mode does not need sbt or a working tree — pure API.
+    # Skips tags that already exist, making reruns idempotent.
+    # Run after the publish job(s) succeed on push-to-main when changesets-count == 0.
+
+    - name: Create GitHub releases
+      if: inputs.mode == 'release-tag'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        RELEASES: ${{ inputs.release-modules }}
+        TARGET: ${{ inputs.target }}
+      run: |
+        for ENTRY in $(jq -c '.[]' <<< "$RELEASES"); do
+          MODULE=$(jq -r .module <<< "$ENTRY")
+          VERSION=$(jq -r .version <<< "$ENTRY")
+          TAG="$MODULE@$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            continue
+          fi
+          BODY_FILE=$(mktemp)
+          jq -r .changelog <<< "$ENTRY" > "$BODY_FILE"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file "$BODY_FILE" \
+            --target "$TARGET"
+          rm -f "$BODY_FILE"
+          echo "Created release: $TAG"
+        done
