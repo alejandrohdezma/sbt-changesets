@@ -1,7 +1,7 @@
 ThisBuild / scalaVersion                  := "2.12.21"
 ThisBuild / organization                  := "com.alejandrohdezma"
 ThisBuild / pluginCrossBuild / sbtVersion := "1.4.0"
-ThisBuild / versionPolicyIntention        := Compatibility.None
+ThisBuild / versionPolicyIntention        := Compatibility.BinaryAndSourceCompatible
 
 addCommandAlias("ci-test", "fix --check; versionPolicyCheck; mdoc; scripted")
 addCommandAlias("ci-docs", "github; mdoc; headerCreateAll")
