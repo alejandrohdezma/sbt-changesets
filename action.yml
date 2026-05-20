@@ -174,35 +174,64 @@ runs:
         rm -f "$BODY_FILE"
 
     # ─── Release-tag ─────────────────────────────
-    # Loops over the release-stage `matrix` (as produced by `detect`) and creates one
-    # GitHub release per distinct module via `gh release create`. Rows carry `module`,
-    # `scala-version`, `version`, and `changelog`; duplicate module rows (from cross-
-    # built modules) become no-ops on the second `gh release view`. Run after the
-    # publish job(s) succeed.
+    # Iterates the release-stage `matrix` (as produced by `detect`) and creates one
+    # GitHub release per distinct module via the Octokit client in `actions/github-
+    # script`. Rows carry `module`, `scala-version`, `version`, and `changelog`;
+    # duplicate module rows (from cross-built modules) are deduped in-script.
+    # Existing tags are skipped, making reruns idempotent. Per-entry failures are
+    # collected and reported via `core.setFailed` at the end — a single bad release
+    # doesn't sink the rest. Run after the publish job(s) succeed.
 
     - name: Create GitHub releases
       if: inputs.mode == 'release-tag'
-      shell: bash
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        GH_REPO: ${{ github.repository }}
         MATRIX: ${{ inputs.matrix }}
         TARGET: ${{ inputs.target }}
-      run: |
-        for ENTRY in $(jq -c '.[]' <<< "$MATRIX"); do
-          MODULE=$(jq -r .module <<< "$ENTRY")
-          VERSION=$(jq -r .version <<< "$ENTRY")
-          TAG="$MODULE@$VERSION"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; skipping."
-            continue
-          fi
-          BODY_FILE=$(mktemp)
-          jq -r .changelog <<< "$ENTRY" > "$BODY_FILE"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes-file "$BODY_FILE" \
-            --target "$TARGET"
-          rm -f "$BODY_FILE"
-          echo "Created release: $TAG"
-        done
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const matrix = JSON.parse(process.env.MATRIX);
+          const target = process.env.TARGET;
+          const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+
+          // Matrix has one row per (module, scala-version); dedupe to one release per module.
+          const seen = new Set();
+          const failures = [];
+
+          for (const row of matrix) {
+            if (seen.has(row.module)) continue;
+            seen.add(row.module);
+
+            const tag = `${row.module}@${row.version}`;
+
+            try {
+              await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              core.info(`${tag} already exists; skipping.`);
+              continue;
+            } catch (err) {
+              if (err.status !== 404) {
+                core.warning(`${tag}: lookup failed (${err.status}): ${err.message}`);
+                failures.push(tag);
+                continue;
+              }
+            }
+
+            try {
+              await github.rest.repos.createRelease({
+                owner, repo,
+                tag_name: tag,
+                target_commitish: target,
+                name: tag,
+                body: row.changelog,
+              });
+              core.info(`Created ${tag}`);
+            } catch (err) {
+              core.error(`${tag}: ${err.message}`);
+              failures.push(tag);
+            }
+          }
+
+          if (failures.length > 0) {
+            core.setFailed(`Failed to create ${failures.length} release(s): ${failures.join(', ')}`);
+          }
