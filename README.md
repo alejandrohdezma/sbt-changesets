@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.5.2")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.6.0")
 ```
 
 This plugin depends on [sbt-modules](https://github.com/alejandrohdezma/sbt-modules), which is pulled in automatically. It expects modules to be defined using `module` instead of `project` in your `build.sbt`, with source code living under `modules/<module-name>/`. See the [sbt-modules documentation](https://github.com/alejandrohdezma/sbt-modules) for details.
@@ -54,7 +54,7 @@ The first argument is the bump type (`patch`, `minor`, or `major`) and the rest 
 
 ### 2. Validating changesets (CI)
 
-On pull requests, run `changesetMatrix validate` to ensure every modified module has at least one changeset entry and emit `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version, coordinate}` rows (one per Scala version in the module's `crossScalaVersions`, including transitive dependents) that you can feed into a CI matrix as `matrix.include`. It fails if any module is missing coverage or if a description still contains the placeholder text.
+On pull requests, run `changesetMatrix validate` to ensure every modified module has at least one changeset entry and emit `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version, coordinate}` rows (one per Scala version in the module's `crossScalaVersions`, including affected dependents) that you can feed into a CI matrix as `matrix.include`. It fails if any module is missing coverage or if a description still contains the placeholder text.
 
 ```json
 [
@@ -65,6 +65,8 @@ On pull requests, run `changesetMatrix validate` to ensure every modified module
 ```
 
 If you need the matrix without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output the matrix.
+
+A module counts as affected when it transitively depends on a changed module through one of `changesetAffectedScopes` (default `Seq("compile")`). A module that depends on it only in **test** scope (e.g. `dependsOn(other % Test)`) is left out — not rebuilt, not version-bumped. To treat such test-scope dependents as affected too, add the scope (`ThisBuild / changesetAffectedScopes += "test"`); use `Seq("*")` to match every scope.
 
 ### 3. Publishing snapshots (CI)
 
@@ -91,7 +93,7 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.5.2` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.6.0` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -125,7 +127,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.5.2
+        uses: alejandrohdezma/sbt-changesets@v0.6.0
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -151,7 +153,7 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.5.2
+      - uses: alejandrohdezma/sbt-changesets@v0.6.0
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -178,7 +180,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.5.2
+      - uses: alejandrohdezma/sbt-changesets@v0.6.0
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -202,7 +204,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.5.2
+      - uses: alejandrohdezma/sbt-changesets@v0.6.0
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -227,7 +229,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.5.2
+      - uses: alejandrohdezma/sbt-changesets@v0.6.0
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -256,7 +258,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.5.2
+      - uses: alejandrohdezma/sbt-changesets@v0.6.0
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
