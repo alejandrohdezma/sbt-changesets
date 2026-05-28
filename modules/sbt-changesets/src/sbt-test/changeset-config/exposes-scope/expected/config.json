@@ -1,0 +1,49 @@
+{
+  "base": {
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "dependencies": [],
+    "transitive_dependencies": [],
+    "dependents": [
+      {
+        "name": "compile-dependent",
+        "configuration": "compile"
+      },
+      {
+        "name": "test-dependent",
+        "configuration": "test"
+      }
+    ],
+    "transitive_dependents": [
+      "compile-dependent",
+      "test-dependent"
+    ]
+  },
+  "compile-dependent": {
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "dependencies": [
+      {
+        "name": "base",
+        "configuration": "compile"
+      }
+    ],
+    "transitive_dependencies": [
+      "base"
+    ],
+    "dependents": [],
+    "transitive_dependents": []
+  },
+  "test-dependent": {
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "dependencies": [
+      {
+        "name": "base",
+        "configuration": "test"
+      }
+    ],
+    "transitive_dependencies": [
+      "base"
+    ],
+    "dependents": [],
+    "transitive_dependents": []
+  }
+}
