@@ -49,8 +49,16 @@ object ChangesetPlugin extends AutoPlugin {
 
   object autoImport {
 
-    val changesetBaseBranch =
-      settingKey[String]("Remote branch reference used to detect changed modules (default: origin/main)")
+    val changesetBaseBranch = settingKey[String] {
+      "Remote branch reference used to detect changed modules (default: origin/main)"
+    }
+
+    val changesetAffectedScopes = settingKey[Seq[String]] {
+      "Dependency scopes (the left-hand side of a `dependsOn` configuration, e.g. \"compile\" or \"test\") through " +
+        "which a change cascades: a module is treated as affected when it depends on a changed module via one of " +
+        "these scopes. Defaults to Seq(\"compile\"), so a module depending on a changed module only via test scope " +
+        "is not affected. Use \"*\" to match any scope."
+    }
 
     val changesetCoordinate = settingKey[String] {
       "Maven-style coordinate for this module, used as the `coordinate` field in the validate-stage matrix " +
@@ -73,7 +81,8 @@ object ChangesetPlugin extends AutoPlugin {
   )
 
   override def buildSettings: Seq[Setting[_]] = Seq(
-    changesetBaseBranch := "origin/main"
+    changesetBaseBranch     := "origin/main",
+    changesetAffectedScopes := Seq("compile")
   )
 
   override def globalSettings: Seq[Setting[_]] = Seq(
