@@ -54,7 +54,7 @@ The first argument is the bump type (`patch`, `minor`, or `major`) and the rest 
 
 ### 2. Validating changesets (CI)
 
-On pull requests, run `changesetMatrix validate` to ensure every modified module has at least one changeset entry and emit `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version, coordinate}` rows (one per Scala version in the module's `crossScalaVersions`, including transitive dependents) that you can feed into a CI matrix as `matrix.include`. It fails if any module is missing coverage or if a description still contains the placeholder text.
+On pull requests, run `changesetMatrix validate` to ensure every modified module has at least one changeset entry and emit `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version, coordinate}` rows (one per Scala version in the module's `crossScalaVersions`, including affected dependents) that you can feed into a CI matrix as `matrix.include`. It fails if any module is missing coverage or if a description still contains the placeholder text.
 
 ```json
 [
@@ -65,6 +65,8 @@ On pull requests, run `changesetMatrix validate` to ensure every modified module
 ```
 
 If you need the matrix without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output the matrix.
+
+A module counts as affected when it transitively depends on a changed module through one of `changesetAffectedScopes` (default `Seq("compile")`). A module that depends on it only in **test** scope (e.g. `dependsOn(other % Test)`) is left out — not rebuilt, not version-bumped. To treat such test-scope dependents as affected too, add the scope (`ThisBuild / changesetAffectedScopes += "test"`); use `Seq("*")` to match every scope.
 
 ### 3. Publishing snapshots (CI)
 
