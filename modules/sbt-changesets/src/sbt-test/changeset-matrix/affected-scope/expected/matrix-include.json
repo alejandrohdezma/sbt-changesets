@@ -1,0 +1,20 @@
+[
+  {
+    "module": "base",
+    "scala-version": "3.3.7",
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"base\" % \"1.0.0-abc123-SNAPSHOT\""
+  },
+  {
+    "module": "compile-dependent",
+    "scala-version": "3.3.7",
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"compile-dependent\" % \"1.0.0-abc123-SNAPSHOT\""
+  },
+  {
+    "module": "test-dependent",
+    "scala-version": "3.3.7",
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"test-dependent\" % \"1.0.0-abc123-SNAPSHOT\""
+  }
+]
