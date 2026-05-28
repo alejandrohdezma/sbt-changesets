@@ -22,6 +22,7 @@ import scala.annotation.tailrec
 
 import sbt._
 
+import com.alejandrohdezma.sbt.modules.ModuleDependency
 import com.alejandrohdezma.sbt.modules.ModuleMetadata
 
 /** A collection of parsed changeset entries keyed by module name.
@@ -77,18 +78,23 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
   /** Expands changeset entries by cascading version bumps through the dependency graph.
     *
     * Starting from the explicit bump levels in this instance, propagates bumps to transitive dependents using
-    * early-semver rules (see [[VersionBump.cascadeBump]]). Propagation repeats until a fixed point is reached (no new
-    * bumps are added or increased).
+    * early-semver rules (see [[VersionBump.cascadeBump]]), following only dependency edges whose scope is in
+    * `affectedScopes` (see [[Changesets.affects]]) — so, by default, dependents that rely on a changed module only via
+    * test scope are not bumped. Propagation repeats until a fixed point is reached (no new bumps are added or
+    * increased).
     *
     * Modules that receive a bump only through cascading get an auto-generated description listing the dependency
     * updates that triggered them.
     *
     * @param modules
     *   the full module metadata map from the SBT build, used for dependency graph traversal and version lookups
+    * @param affectedScopes
+    *   the dependency-edge scopes through which bumps cascade (the left-hand side of each `dependsOn` mapping; `"*"`
+    *   matches any scope). Defaults to `Set("compile")`.
     * @return
     *   a new [[Changesets]] containing both the original and cascaded entries
     */
-  def cascadeExpand(modules: Map[String, ModuleMetadata]): Changesets = {
+  def cascadeExpand(modules: Map[String, ModuleMetadata], affectedScopes: Set[String] = Set("compile")): Changesets = {
 
     // Immutable snapshot of cascading bump computation.
     //
@@ -103,26 +109,30 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
       // dependent already has, the state is updated. Modules that receive a bump only through cascading (not from an
       // explicit changeset) also get their trigger recorded.
       lazy val propagate: State = bumps.foldLeft(this) { case (acc, (name, bump)) =>
-        // Walk each direct dependent of the bumped module
-        modules(name).dependents.foldLeft(acc) { (acc, dep) =>
-          // Determine what bump level this dependency change implies for the dependent
-          val cascade = bump.cascadeBump(modules(name).version, modules(dep).version)
+        // Walk each direct dependent of the bumped module whose dependency edge is in one of the affected scopes
+        modules(name).dependents.foldLeft(acc) {
+          case (acc, dep) if Changesets.affects(dep, affectedScopes) =>
+            // Determine what bump level this dependency change implies for the dependent
+            val cascade = bump.cascadeBump(modules(name).version, modules(dep.name).version)
 
-          val existingBump = acc.bumps.get(dep)
+            val existingBump = acc.bumps.get(dep.name)
 
-          // Take the maximum of the existing bump (if any) and the cascaded bump
-          val newBump = existingBump.map(_.max(cascade)).getOrElse(cascade)
+            // Take the maximum of the existing bump (if any) and the cascaded bump
+            val newBump = existingBump.map(_.max(cascade)).getOrElse(cascade)
 
-          // Skip if the dependent already has an equal or higher bump
-          if (existingBump.contains(newBump)) acc
-          else {
-            // Only track triggers for modules without an explicit changeset entry
-            val newTriggers =
-              if (value.contains(dep)) acc.triggers
-              else acc.triggers.updated(dep, (name :: acc.triggers.getOrElse(dep, Nil)).distinct)
+            // Skip if the dependent already has an equal or higher bump
+            if (existingBump.contains(newBump)) acc
+            else {
+              // Only track triggers for modules without an explicit changeset entry
+              val newTriggers =
+                if (value.contains(dep.name)) acc.triggers
+                else acc.triggers.updated(dep.name, (name :: acc.triggers.getOrElse(dep.name, Nil)).distinct)
 
-            State(acc.bumps.updated(dep, newBump), newTriggers)
-          }
+              State(acc.bumps.updated(dep.name, newBump), newTriggers)
+            }
+
+          case (acc, _) =>
+            acc
         }
       }
 
@@ -251,5 +261,40 @@ object Changesets {
       .listFiles()
       .filter(f => f.getName.endsWith(".md") && f.getName != "README.md")
       .foreach(_.delete())
+
+  /** Returns whether the given dependency edge makes the depending module affected, given the set of `affectedScopes`
+    * that count.
+    *
+    * The left-hand side of each `;`-separated mapping in `dependency.configuration` is the depending module's
+    * configuration (e.g. `"compile"` for a plain `dependsOn`, `"test"` for `% Test`, both for
+    * `"compile->compile;test->test"`). The edge affects when any of those configurations is in `affectedScopes`. `"*"`
+    * — either as an edge configuration or within `affectedScopes` — matches any scope.
+    *
+    * @param dependency
+    *   the direct dependency edge to test
+    * @param affectedScopes
+    *   the scopes that count as affecting (`"*"` matches any scope)
+    */
+  def affects(dependency: ModuleDependency, affectedScopes: Set[String]): Boolean =
+    affectedScopes.contains("*") || dependency.configuration.split(";").exists { mapping =>
+      val scope = mapping.split("->").headOption.getOrElse("").trim
+      scope == "*" || affectedScopes.contains(scope)
+    }
+
+  /** Returns every module transitively reachable from `seed` by following the given direct-dependents graph. The result
+    * includes `seed` itself. Filtering the graph by scope before calling this is what keeps test-only dependents out of
+    * the closure.
+    */
+  def affectedClosure(seed: Set[String], directDependents: Map[String, Set[String]]): Set[String] = {
+    @tailrec
+    def loop(frontier: Set[String], acc: Set[String]): Set[String] =
+      if (frontier.isEmpty) acc
+      else {
+        val next = frontier.flatMap(directDependents.getOrElse(_, Set.empty)).diff(acc)
+        loop(next, acc ++ next)
+      }
+
+    loop(seed, seed)
+  }
 
 }

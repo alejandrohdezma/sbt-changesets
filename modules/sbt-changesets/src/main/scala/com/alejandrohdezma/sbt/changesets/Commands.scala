@@ -28,6 +28,7 @@ import sbt._
 
 import com.alejandrohdezma.sbt.changesets.ChangesetPlugin.autoImport._
 import com.alejandrohdezma.sbt.changesets.Json._
+import com.alejandrohdezma.sbt.modules.ModuleDependency
 import com.alejandrohdezma.sbt.modules.ModuleMetadata
 import com.alejandrohdezma.sbt.modules.ModulesPlugin.autoImport._
 import com.typesafe.config.ConfigFactory
@@ -53,27 +54,33 @@ object Commands {
        |  {
        |    "module-name": {
        |      "version": "1.0.0",
-       |      "dependencies": ["dep-1"],
+       |      "dependencies": [{"name": "dep-1", "configuration": "compile"}],
        |      "transitive_dependencies": ["dep-0", "dep-1"],
-       |      "dependents": ["dep-2"],
+       |      "dependents": [{"name": "dep-2", "configuration": "test"}],
        |      "transitive_dependents": ["dep-2", "dep-3"]
        |    },
        |    ...
        |  }
        |
+       |Direct `dependencies` and `dependents` carry each `dependsOn` edge's `configuration`
+       |(e.g. `"compile"`, `"test"`, `"compile->compile;test->test"`). The `transitive_*`
+       |sets are name-only because a transitive path can mix scopes.
+       |
        |Module list and dependency graph are derived from the SBT build structure.""".stripMargin
   ) { state =>
     val modules = ModuleMetadata.from(state)
 
-    def asJson(metadata: ModuleMetadata) = Json.obj(
+    def asObject(d: ModuleDependency): Json = Json.obj("name" := d.name, "configuration" := d.configuration)
+
+    def asJson(metadata: ModuleMetadata): Json = Json.obj(
       "version"                 := metadata.version,
-      "dependencies"            -> Json.arr(metadata.dependencies.toList.sorted: _*),
+      "dependencies"            -> Json.arr(metadata.dependencies.toList.sortBy(_.name).map(asObject): _*),
       "transitive_dependencies" -> Json.arr(metadata.transitiveDependencies.toList.sorted: _*),
-      "dependents"              -> Json.arr(metadata.dependents.toList.sorted: _*),
+      "dependents"              -> Json.arr(metadata.dependents.toList.sortBy(_.name).map(asObject): _*),
       "transitive_dependents"   -> Json.arr(metadata.transitiveDependents.toList.sorted: _*)
     )
 
-    val json = Json.obj(modules.mapValues(asJson))
+    val json = Json.obj(modules.mapValues(asJson).toSeq.sortBy(_._1): _*)
 
     val file = Project.extract(state).get(ThisBuild / baseDirectory) / "target" / "changeset" / "config.json"
 
@@ -98,11 +105,14 @@ object Commands {
        |Cascading follows early-semver: for 0.x, minor is breaking; for 1.x+,
        |major is breaking. Dependents receive at least the same bump level.""".stripMargin
   ) { state =>
-    val base = Project.extract(state).get(ThisBuild / baseDirectory)
+    val extracted      = Project.extract(state)
+    val base           = extracted.get(ThisBuild / baseDirectory)
+    val affectedScopes = extracted.get(ThisBuild / changesetAffectedScopes).toSet
 
     val modules     = ModuleMetadata.from(state)
     val moduleNames = extractModuleNames(state)
-    val changesets  = parseAndValidate(base / ".changeset", moduleNames, state.log).cascadeExpand(modules)
+    val changesets  =
+      parseAndValidate(base / ".changeset", moduleNames, state.log).cascadeExpand(modules, affectedScopes)
 
     // Apply bumps and collect version summary
     val summary = changesets.value.toList.sortBy(_._1).map { case (name, entry) =>
@@ -276,10 +286,11 @@ object Commands {
     * including any `SNAPSHOT_SUFFIX`.
     */
   private def computeValidateMatrix(state: State): State = {
-    val extracted = Project.extract(state)
-    val base      = extracted.get(ThisBuild / baseDirectory)
-    val modules   = ModuleMetadata.from(state)
-    val refs      = moduleRefs(state)
+    val extracted      = Project.extract(state)
+    val base           = extracted.get(ThisBuild / baseDirectory)
+    val affectedScopes = extracted.get(ThisBuild / changesetAffectedScopes).toSet
+    val modules        = ModuleMetadata.from(state)
+    val refs           = moduleRefs(state)
 
     val changed    = changedModules(state)
     val changesets = parseAndValidate(base / ".changeset", refs.keySet, state.log)
@@ -304,8 +315,10 @@ object Commands {
       }
     }
 
+    val directDependents = modules.mapValues(_.dependents.filter(Changesets.affects(_, affectedScopes)).map(_.name))
+
     val seed     = changed ++ changesets.keys
-    val affected = seed ++ seed.flatMap(n => modules.get(n).map(_.transitiveDependents).getOrElse(Set.empty))
+    val affected = Changesets.affectedClosure(seed, directDependents)
 
     val rows = affected.toList.sorted.flatMap { name =>
       refs.get(name).toList.flatMap { ref =>
