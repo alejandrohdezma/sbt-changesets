@@ -163,7 +163,7 @@ jobs:
 
 #### Customising the `coordinate` per module
 
-The default coordinate is `"org" %% "name" % "version"` for Scala modules and `"org" % "name" % "version"` for Java modules (`crossPaths := false`). Override the `changesetCoordinate` sbt setting on individual projects when you want the snapshot-comment to render something different — for example, testkit modules that consumers always import in the `test` configuration:
+The default coordinate is `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`); it tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId. Override the `changesetCoordinate` sbt setting on individual projects when you want the snapshot-comment to render something different — for example, testkit modules that consumers always import in the `test` configuration:
 
 ```scala
 lazy val `my-testkit` = module.settings(changesetCoordinate ~= { _ + " % \"test\"" })
