@@ -3,6 +3,7 @@ module-a {
     removed=[]
     updated=[
         {
+            configuration=compile
             from="3.12.2"
             name="fs2-core_3"
             organization="co.fs2"
@@ -13,6 +14,7 @@ module-a {
 module-b {
     added=[
         {
+            configuration=test
             name="scala-java-time_3"
             organization="io.github.cquiroz"
             version="2.6.0"
@@ -21,11 +23,24 @@ module-b {
     removed=[]
     updated=[]
 }
+module-c {
+    added=[]
+    removed=[]
+    updated=[
+        {
+            from="1.0.0"
+            name=some-legacy-dep
+            organization="org.example"
+            to="1.1.0"
+        }
+    ]
+}
 sbt-build {
     added=[]
     removed=[]
     updated=[
         {
+            configuration=compile
             from="1.12.6"
             name=sbt
             organization="org.scala-sbt"
