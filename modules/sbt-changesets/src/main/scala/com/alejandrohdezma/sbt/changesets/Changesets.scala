@@ -79,7 +79,7 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
     *
     * Starting from the explicit bump levels in this instance, propagates bumps to transitive dependents using
     * early-semver rules (see [[VersionBump.cascadeBump]]), following only dependency edges whose scope is in
-    * `affectedScopes` (see [[Changesets.affects]]) — so, by default, dependents that rely on a changed module only via
+    * `affectedScopes` (see `Changesets.affects`) — so, by default, dependents that rely on a changed module only via
     * test scope are not bumped. Propagation repeats until a fixed point is reached (no new bumps are added or
     * increased).
     *
@@ -262,13 +262,27 @@ object Changesets {
       .filter(f => f.getName.endsWith(".md") && f.getName != "README.md")
       .foreach(_.delete())
 
-  /** Returns whether the given dependency edge makes the depending module affected, given the set of `affectedScopes`
-    * that count.
+  /** Returns whether a dependency edge with the given `dependsOn` configuration matches one of the affected scopes.
     *
-    * The left-hand side of each `;`-separated mapping in `dependency.configuration` is the depending module's
-    * configuration (e.g. `"compile"` for a plain `dependsOn`, `"test"` for `% Test`, both for
-    * `"compile->compile;test->test"`). The edge affects when any of those configurations is in `affectedScopes`. `"*"`
-    * — either as an edge configuration or within `affectedScopes` — matches any scope.
+    * The left-hand side of each `;`-separated mapping is the depending module's configuration (e.g. `"compile"` for a
+    * plain `dependsOn`, `"test"` for `% Test`, both for `"compile->compile;test->test"`). The configuration matches
+    * when any of those left-hand-side configurations is in `affectedScopes`. `"*"` — either as an edge configuration or
+    * within `affectedScopes` — matches any scope.
+    *
+    * @param configuration
+    *   the raw `dependsOn` configuration string
+    * @param affectedScopes
+    *   the scopes that count as affecting (`"*"` matches any scope)
+    */
+  def affects(configuration: String, affectedScopes: Set[String]): Boolean =
+    affectedScopes.contains("*") || configuration.split(";").exists { mapping =>
+      val scope = mapping.split("->").headOption.getOrElse("").trim
+      scope == "*" || affectedScopes.contains(scope)
+    }
+
+  /** Returns whether the given dependency edge makes the depending module affected, given the set of `affectedScopes`
+    * that count. Convenience overload that delegates to the configuration-string overload using
+    * `dependency.configuration`.
     *
     * @param dependency
     *   the direct dependency edge to test
@@ -276,10 +290,7 @@ object Changesets {
     *   the scopes that count as affecting (`"*"` matches any scope)
     */
   def affects(dependency: ModuleDependency, affectedScopes: Set[String]): Boolean =
-    affectedScopes.contains("*") || dependency.configuration.split(";").exists { mapping =>
-      val scope = mapping.split("->").headOption.getOrElse("").trim
-      scope == "*" || affectedScopes.contains(scope)
-    }
+    affects(dependency.configuration, affectedScopes)
 
   /** Returns every module transitively reachable from `seed` by following the given direct-dependents graph. The result
     * includes `seed` itself. Filtering the graph by scope before calling this is what keeps test-only dependents out of

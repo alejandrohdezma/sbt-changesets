@@ -391,7 +391,7 @@ class ChangesetsSuite extends munit.FunSuite {
   }
 
   test("Changesets.affects - empty affected-scopes set never matches a concrete scope") {
-    val result = Changesets.affects(ModuleDependency("dep", "compile"), Set.empty)
+    val result = Changesets.affects(ModuleDependency("dep", "compile"), Set.empty[String])
 
     assertEquals(result, false)
   }
