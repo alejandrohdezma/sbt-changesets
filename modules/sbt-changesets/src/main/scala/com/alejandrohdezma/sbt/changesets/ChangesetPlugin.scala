@@ -62,9 +62,10 @@ object ChangesetPlugin extends AutoPlugin {
 
     val changesetCoordinate = settingKey[String] {
       "Maven-style coordinate for this module, used as the `coordinate` field in the validate-stage matrix " +
-        "(consumed by `snapshot-comment`). Defaults to `\"org\" %% \"name\" % \"version\"` for Scala modules " +
-        "and `\"org\" % \"name\" % \"version\"` for Java modules (`crossPaths := false`). Override per-project " +
-        "for test-scoped modules (`... % \"test\"`) or custom artifact shapes."
+        "(consumed by `snapshot-comment`). Defaults to `\"org\" %% \"moduleName\" % \"version\"` for Scala modules " +
+        "and `\"org\" % \"moduleName\" % \"version\"` for Java modules (`crossPaths := false`); it tracks " +
+        "`moduleName`, so a module published under a different artifactId than its project name renders that " +
+        "artifactId. Override per-project for test-scoped modules (`... % \"test\"`) or custom artifact shapes."
     }.withRank(KeyRanks.Invisible)
 
   }
@@ -77,7 +78,7 @@ object ChangesetPlugin extends AutoPlugin {
     versionScheme       := Some("early-semver"),
     homepage            := scmInfo.value.map(_.browseUrl),
     scmInfo             := Settings.scmInfoFromGit.value,
-    changesetCoordinate := s""""${organization.value}" ${Settings.separator.value} "${name.value}" % "${version.value}""""
+    changesetCoordinate := s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
   )
 
   override def buildSettings: Seq[Setting[_]] = Seq(

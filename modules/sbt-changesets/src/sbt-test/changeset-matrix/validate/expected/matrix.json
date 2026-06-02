@@ -34,5 +34,17 @@
     "scala-version": "3.3.7",
     "version": "5.0.0-abc123-SNAPSHOT",
     "coordinate": "\"com.example\" %% \"module-e\" % \"5.0.0-abc123-SNAPSHOT\" % \"test\""
+  },
+  {
+    "module": "module-f",
+    "scala-version": "2.13.18",
+    "version": "6.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"module-f-renamed\" % \"6.0.0-abc123-SNAPSHOT\""
+  },
+  {
+    "module": "module-f",
+    "scala-version": "3.3.7",
+    "version": "6.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"module-f-renamed\" % \"6.0.0-abc123-SNAPSHOT\""
   }
 ]
