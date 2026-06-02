@@ -1,4 +1,4 @@
-Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Action)
+Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Action).
 
 `sbt-changesets` provides a better (and easier) way to manage libraries. Specially useful for company-internal monorepos, bringing changeset-based versioning to Scala multi-module builds. Developers describe their changes in small markdown files, and the plugin takes care of version bumps, dependency cascade, and changelog generation.
 
