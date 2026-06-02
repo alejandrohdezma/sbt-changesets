@@ -66,7 +66,7 @@ On pull requests, run `changesetMatrix validate` to ensure every modified module
 
 If you need the matrix without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output the matrix.
 
-A module counts as affected when it transitively depends on a changed module through one of `changesetAffectedScopes` (default `Seq("compile")`). A module that depends on it only in **test** scope (e.g. `dependsOn(other % Test)`) is left out — not rebuilt, not version-bumped. To treat such test-scope dependents as affected too, add the scope (`ThisBuild / changesetAffectedScopes += "test"`); use `Seq("*")` to match every scope.
+A module counts as affected when it transitively depends on a changed module through one of `changesetAffectedScopes` (default `Seq("compile")`). A module that depends on it only in **test** scope (e.g. `dependsOn(other % Test)`) is left out — not rebuilt, not version-bumped. The same setting also gates `changesetFromDependencyDiff`: a dependency-update PR only creates a patch bump for a module when at least one updated dep in that module is in one of these scopes — so a `munit:test` bump in a module whose only use of munit is test-scoped no longer triggers a release of that module. To treat such test-scope dependencies as affected too, add the scope (`ThisBuild / changesetAffectedScopes += "test"`); use `Seq("*")` to match every scope.
 
 ### 3. Publishing snapshots (CI)
 
