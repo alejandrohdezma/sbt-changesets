@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.7.1")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.7.2")
 ```
 
 This plugin depends on [sbt-modules](https://github.com/alejandrohdezma/sbt-modules), which is pulled in automatically. It expects modules to be defined using `module` instead of `project` in your `build.sbt`, with source code living under `modules/<module-name>/`. See the [sbt-modules documentation](https://github.com/alejandrohdezma/sbt-modules) for details.
@@ -93,7 +93,7 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.7.1` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.7.2` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -127,7 +127,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.7.1
+        uses: alejandrohdezma/sbt-changesets@v0.7.2
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -141,6 +141,7 @@ jobs:
         include: ${{ fromJson(needs.detect.outputs.matrix) }}
     env:
       SNAPSHOT_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
+      SNAPSHOT_MODULES: ${{ needs.detect.outputs.matrix }}
     steps:
       - uses: actions/checkout@@v4
 
@@ -153,13 +154,15 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.1
+      - uses: alejandrohdezma/sbt-changesets@v0.7.2
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
 ```
 
 `SNAPSHOT_SUFFIX` (e.g. `${{ github.run_id }}-${{ github.run_attempt }}`) is set on both `detect` and `validate` so the coordinates resolved up-front in `detect` match the artifacts published by the `validate` matrix. Because every matrix cell in a single workflow run shares the same `SNAPSHOT_SUFFIX`, the per-Scala-version publishes that make up one module produce consistent versions. The `coordinate` field carried in each matrix row is rendered from each module's sbt `organization` setting, so per-module org overrides (e.g. `com.permutive.metrics`) are respected without any consumer-side hardcoding. Snapshot publishes are intended for private monorepos only — exposing publishing credentials on PRs in public repositories is a security risk.
+
+`SNAPSHOT_MODULES` (optional, read by `versionFromFile` with the same env / system-property fallback as `SNAPSHOT_SUFFIX`) carries the validate-stage matrix itself — set it to `${{ needs.detect.outputs.matrix }}`, as above. `versionFromFile` reads the `module` of every row to learn which modules are being snapshot-published and suffixes only those; every other module reports the raw `VERSION` content instead. This matters whenever an affected module `dependsOn` an *unchanged* sibling: without it every module is suffixed, so the published POM would reference the sibling at `…-SNAPSHOT` even though no such snapshot was published (it never changed), and resolution fails. With it, the sibling keeps its released version and the coordinate resolves. An empty or absent `SNAPSHOT_MODULES` (e.g. a local `publishLocal`) means every module is suffixed, as before.
 
 #### Customising the `coordinate` per module
 
@@ -180,7 +183,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.1
+      - uses: alejandrohdezma/sbt-changesets@v0.7.2
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -204,7 +207,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.1
+      - uses: alejandrohdezma/sbt-changesets@v0.7.2
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -229,7 +232,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.7.1
+      - uses: alejandrohdezma/sbt-changesets@v0.7.2
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -258,7 +261,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.1
+      - uses: alejandrohdezma/sbt-changesets@v0.7.2
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
