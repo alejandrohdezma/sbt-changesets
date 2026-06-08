@@ -141,6 +141,7 @@ jobs:
         include: ${{ fromJson(needs.detect.outputs.matrix) }}
     env:
       SNAPSHOT_SUFFIX: ${{ github.run_id }}-${{ github.run_attempt }}
+      SNAPSHOT_MODULES: ${{ needs.detect.outputs.matrix }}
     steps:
       - uses: actions/checkout@@v4
 
@@ -160,6 +161,8 @@ jobs:
 ```
 
 `SNAPSHOT_SUFFIX` (e.g. `${{ github.run_id }}-${{ github.run_attempt }}`) is set on both `detect` and `validate` so the coordinates resolved up-front in `detect` match the artifacts published by the `validate` matrix. Because every matrix cell in a single workflow run shares the same `SNAPSHOT_SUFFIX`, the per-Scala-version publishes that make up one module produce consistent versions. The `coordinate` field carried in each matrix row is rendered from each module's sbt `organization` setting, so per-module org overrides (e.g. `com.permutive.metrics`) are respected without any consumer-side hardcoding. Snapshot publishes are intended for private monorepos only — exposing publishing credentials on PRs in public repositories is a security risk.
+
+`SNAPSHOT_MODULES` (optional, read by `versionFromFile` with the same env / system-property fallback as `SNAPSHOT_SUFFIX`) carries the validate-stage matrix itself — set it to `${{ needs.detect.outputs.matrix }}`, as above. `versionFromFile` reads the `module` of every row to learn which modules are being snapshot-published and suffixes only those; every other module reports the raw `VERSION` content instead. This matters whenever an affected module `dependsOn` an *unchanged* sibling: without it every module is suffixed, so the published POM would reference the sibling at `…-SNAPSHOT` even though no such snapshot was published (it never changed), and resolution fails. With it, the sibling keeps its released version and the coordinate resolves. An empty or absent `SNAPSHOT_MODULES` (e.g. a local `publishLocal`) means every module is suffixed, as before.
 
 #### Customising the `coordinate` per module
 
