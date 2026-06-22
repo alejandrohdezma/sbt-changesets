@@ -16,6 +16,7 @@
 
 package com.alejandrohdezma.sbt.changesets
 
+import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -421,17 +422,44 @@ object Commands {
     *   - '''Uncommitted''': `git diff HEAD` (staged and unstaged changes to tracked files)
     *   - '''Untracked''': `git ls-files --others` (new files not yet added to git)
     *
+    * A changed file only flags its module when it lives in a source set whose scope is listed in
+    * `changesetAffectedScopes` (default `Seq("compile")`); changes confined to other source sets (e.g. `src/test`) are
+    * ignored. Files outside every source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts
+    * every source set.
+    *
     * Only returns names that correspond to actual SBT modules (validated via `packageIsModule` setting).
     */
   def changedModules(state: State): Set[String] = {
     val extracted = Project.extract(state)
 
-    val base = extracted.get(ThisBuild / baseDirectory)
+    val base   = extracted.get(ThisBuild / baseDirectory)
+    val refs   = moduleRefs(state)
+    val scopes = extracted.get(ThisBuild / changesetAffectedScopes).toSet
 
-    val moduleNames = extracted.structure.allProjectRefs
-      .filter(ref => extracted.get(ref / packageIsModule))
-      .map(ref => extracted.get(ref / Keys.name))
-      .toSet
+    val projects = extracted.structure.allProjects.map(p => p.id -> p).toMap
+
+    def dirByScope(ref: ProjectRef, config: Configuration): Seq[File] =
+      extracted.getOpt(ref / config / unmanagedSourceDirectories).getOrElse(Nil) ++
+        extracted.getOpt(ref / config / unmanagedResourceDirectories).getOrElse(Nil)
+
+    // Configs like `Runtime`/`Provided` extend `Compile`, so their source dirs delegate to `src/main`. Tagging each
+    // dir by whether its scope is affected and subtracting keeps such a dir out of the excluded set when any
+    // affected scope (e.g. `compile`) also owns it.
+    val excludedDirs: Set[String] =
+      if (scopes.contains("*")) Set.empty[String]
+      else {
+        val byScope = for {
+          ref    <- refs.values.toList
+          config <- projects.get(ref.project).toList.flatMap(_.configurations)
+          dir    <- dirByScope(ref, config).flatMap(_.relativeTo(base)).map(_.getPath.replace(File.separatorChar, '/'))
+        } yield (scopes.contains(config.name), dir)
+
+        val (included, excluded) = byScope.partition(_._1)
+
+        excluded.map(_._2).toSet -- included.map(_._2).toSet
+      }
+
+    def ignorable(path: String) = excludedDirs.exists(d => path == d || path.startsWith(d + "/"))
 
     val baseBranch = extracted.get(ThisBuild / changesetBaseBranch)
 
@@ -445,11 +473,11 @@ object Commands {
     val untracked   = Process(Seq("git", "ls-files", "--others", "--exclude-standard", "modules/"), base).!!.trim
 
     (committed + "\n" + uncommitted + "\n" + untracked).linesIterator.flatMap {
-      case path if path.startsWith("modules/") =>
+      case path if path.startsWith("modules/") && !ignorable(path) =>
         path.stripPrefix("modules/").split("/").headOption
 
       case _ => None
-    }.toSet.intersect(moduleNames)
+    }.toSet.intersect(refs.keySet)
   }
 
   /** Extracts the set of module names from the SBT build state. */
