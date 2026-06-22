@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.7.2")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.7.3")
 ```
 
 This plugin depends on [sbt-modules](https://github.com/alejandrohdezma/sbt-modules), which is pulled in automatically. It expects modules to be defined using `module` instead of `project` in your `build.sbt`, with source code living under `modules/<module-name>/`. See the [sbt-modules documentation](https://github.com/alejandrohdezma/sbt-modules) for details.
@@ -66,7 +66,7 @@ On pull requests, run `changesetMatrix validate` to ensure every modified module
 
 If you need the matrix without requiring changeset entries (e.g. for snapshot publishing or local development), set the `CHANGESET_SKIP_VALIDATION` environment variable to `true`. The command will skip validation and still output the matrix.
 
-A module counts as affected when it transitively depends on a changed module through one of `changesetAffectedScopes` (default `Seq("compile")`). A module that depends on it only in **test** scope (e.g. `dependsOn(other % Test)`) is left out — not rebuilt, not version-bumped. The same setting also gates `changesetFromDependencyDiff`: a dependency-update PR only creates a patch bump for a module when at least one updated dep in that module is in one of these scopes — so a `munit:test` bump in a module whose only use of munit is test-scoped no longer triggers a release of that module. To treat such test-scope dependencies as affected too, add the scope (`ThisBuild / changesetAffectedScopes += "test"`); use `Seq("*")` to match every scope.
+A module counts as affected when it transitively depends on a changed module through one of `changesetAffectedScopes` (default `Seq("compile")`). A module that depends on it only in **test** scope (e.g. `dependsOn(other % Test)`) is left out — not rebuilt, not version-bumped. The same setting also gates `changesetFromDependencyDiff`: a dependency-update PR only creates a patch bump for a module when at least one updated dep in that module is in one of these scopes — so a `munit:test` bump in a module whose only use of munit is test-scoped no longer triggers a release of that module. And it decides which of a module's own source sets count as a change: a modification confined to a source set outside these scopes — e.g. `src/test` under the default `Seq("compile")` — does not require a changeset, while a `src/main` change (or a file outside any source set, such as `build.sbt` or `VERSION`) does. To opt these in — test-scope dependents and `src/test` changes alike — add the scope (`ThisBuild / changesetAffectedScopes += "test"`); use `Seq("*")` to match every scope.
 
 ### 3. Publishing snapshots (CI)
 
@@ -93,7 +93,7 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.7.2` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.7.3` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -127,7 +127,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.7.2
+        uses: alejandrohdezma/sbt-changesets@v0.7.3
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -154,7 +154,7 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.2
+      - uses: alejandrohdezma/sbt-changesets@v0.7.3
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -183,7 +183,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.2
+      - uses: alejandrohdezma/sbt-changesets@v0.7.3
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -207,7 +207,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.2
+      - uses: alejandrohdezma/sbt-changesets@v0.7.3
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -232,7 +232,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.7.2
+      - uses: alejandrohdezma/sbt-changesets@v0.7.3
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -261,7 +261,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.7.2
+      - uses: alejandrohdezma/sbt-changesets@v0.7.3
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
