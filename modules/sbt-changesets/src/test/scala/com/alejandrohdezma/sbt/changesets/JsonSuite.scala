@@ -32,7 +32,7 @@ class JsonSuite extends munit.FunSuite {
   // --- Json.arr ---
 
   test("Json.arr - empty array") {
-    assertEquals(Json.arr(Seq.empty[String]: _*).show(), "[]")
+    assertEquals(Json.arr(Seq.empty[String] *).show(), "[]")
   }
 
   test("Json.arr - single element") {
@@ -103,7 +103,7 @@ class JsonSuite extends munit.FunSuite {
   // --- Json.arr (Json elements) ---
 
   test("Json.arr - empty array of Json elements") {
-    assertEquals(Json.arr(Seq.empty[Json]: _*)(DummyImplicit.dummyImplicit).show(), "[]")
+    assertEquals(Json.arr(Seq.empty[Json] *).show(), "[]")
   }
 
   test("Json.arr - Json elements renders nested objects") {
@@ -124,7 +124,7 @@ class JsonSuite extends munit.FunSuite {
          |  }
          |]""".stripMargin
 
-    assertEquals(Json.arr(items: _*)(DummyImplicit.dummyImplicit).show(), expected)
+    assertEquals(Json.arr(items *).show(), expected)
   }
 
   // --- := syntax ---

@@ -75,13 +75,13 @@ object Commands {
 
     def asJson(metadata: ModuleMetadata): Json = Json.obj(
       "version"                 := metadata.version,
-      "dependencies"            -> Json.arr(metadata.dependencies.toList.sortBy(_.name).map(asObject): _*),
-      "transitive_dependencies" -> Json.arr(metadata.transitiveDependencies.toList.sorted: _*),
-      "dependents"              -> Json.arr(metadata.dependents.toList.sortBy(_.name).map(asObject): _*),
-      "transitive_dependents"   -> Json.arr(metadata.transitiveDependents.toList.sorted: _*)
+      "dependencies"            -> Json.arr(metadata.dependencies.toList.sortBy(_.name).map(asObject) *),
+      "transitive_dependencies" -> Json.arr(metadata.transitiveDependencies.toList.sorted *),
+      "dependents"              -> Json.arr(metadata.dependents.toList.sortBy(_.name).map(asObject) *),
+      "transitive_dependents"   -> Json.arr(metadata.transitiveDependents.toList.sorted *)
     )
 
-    val json = Json.obj(modules.toSeq.map { case (name, metadata) => name -> asJson(metadata) }.sortBy(_._1): _*)
+    val json = Json.obj(modules.toSeq.map { case (name, metadata) => name -> asJson(metadata) }.sortBy(_._1) *)
 
     val file = Project.extract(state).get(ThisBuild / baseDirectory) / "target" / "changeset" / "config.json"
 
@@ -135,7 +135,7 @@ object Commands {
 
     // Write version summary
     val summaryFile = base / "target" / "changeset" / "version-summary.json"
-    IO.write(summaryFile, Json.arr(summary: _*).show())
+    IO.write(summaryFile, Json.arr(summary *).show())
     state.log.info(s"Wrote version summary to ${Colors.path(summaryFile)}")
 
     // Remove processed changeset files
@@ -354,7 +354,7 @@ object Commands {
       }
     }
 
-    val json = Json.arr(rows: _*)
+    val json = Json.arr(rows *)
     val file = base / "target" / "changeset" / "matrix.json"
     IO.write(file, json.show())
 
@@ -398,7 +398,7 @@ object Commands {
       }
     }
 
-    val json = Json.arr(rows: _*)
+    val json = Json.arr(rows *)
     val file = base / "target" / "changeset" / "matrix.json"
     IO.write(file, json.show())
 
