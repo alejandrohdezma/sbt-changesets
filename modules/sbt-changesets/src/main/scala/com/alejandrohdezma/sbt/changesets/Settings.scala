@@ -19,7 +19,7 @@ package com.alejandrohdezma.sbt.changesets
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.sys.process._
 import scala.util.Try
 
