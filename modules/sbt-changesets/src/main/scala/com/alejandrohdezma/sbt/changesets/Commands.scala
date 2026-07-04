@@ -81,7 +81,7 @@ object Commands {
       "transitive_dependents"   -> Json.arr(metadata.transitiveDependents.toList.sorted: _*)
     )
 
-    val json = Json.obj(modules.mapValues(asJson).toSeq.sortBy(_._1): _*)
+    val json = Json.obj(modules.toSeq.map { case (name, metadata) => name -> asJson(metadata) }.sortBy(_._1): _*)
 
     val file = Project.extract(state).get(ThisBuild / baseDirectory) / "target" / "changeset" / "config.json"
 
@@ -334,7 +334,9 @@ object Commands {
       }
     }
 
-    val directDependents = modules.mapValues(_.dependents.filter(Changesets.affects(_, affectedScopes)).map(_.name))
+    val directDependents = modules.map { case (name, metadata) =>
+      name -> metadata.dependents.filter(Changesets.affects(_, affectedScopes)).map(_.name)
+    }
 
     val seed     = changed ++ changesets.keys
     val affected = Changesets.affectedClosure(seed, directDependents)
