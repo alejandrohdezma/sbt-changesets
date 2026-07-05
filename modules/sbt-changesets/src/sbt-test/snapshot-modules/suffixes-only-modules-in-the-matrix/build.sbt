@@ -1,8 +1,8 @@
 ThisBuild / scalaVersion       := "3.3.7"
 ThisBuild / crossScalaVersions := Seq("3.3.7")
 
-val assertSnapshot = taskKey[Unit]("Assert the module version carries the snapshot suffix")
-val assertRelease  = taskKey[Unit]("Assert the module version is the raw release version (no snapshot suffix)")
+@transient val assertSnapshot = taskKey[Unit]("Assert the module version carries the snapshot suffix")
+@transient val assertRelease  = taskKey[Unit]("Assert the module version is the raw release version (no snapshot suffix)")
 
 def assertions = Seq(
   assertSnapshot := {

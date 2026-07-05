@@ -1,8 +1,8 @@
 ThisBuild / scalaVersion       := "3.3.7"
 ThisBuild / crossScalaVersions := Seq("3.3.7", "2.13.18")
 
-val assertSkipped    = taskKey[Unit]("Assert publish / skip is true")
-val assertNotSkipped = taskKey[Unit]("Assert publish / skip is false")
+@transient val assertSkipped    = taskKey[Unit]("Assert publish / skip is true")
+@transient val assertNotSkipped = taskKey[Unit]("Assert publish / skip is false")
 
 def assertionSettings = Seq(
   assertSkipped := {

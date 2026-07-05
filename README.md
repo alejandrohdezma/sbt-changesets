@@ -14,6 +14,8 @@ Add the plugin to your `project/plugins.sbt`:
 addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.7.3")
 ```
 
+The same coordinate is published for both **sbt 1.x** (Scala 2.12) and **sbt 2.x** (Scala 3).
+
 This plugin depends on [sbt-modules](https://github.com/alejandrohdezma/sbt-modules), which is pulled in automatically. It expects modules to be defined using `module` instead of `project` in your `build.sbt`, with source code living under `modules/<module-name>/`. See the [sbt-modules documentation](https://github.com/alejandrohdezma/sbt-modules) for details.
 
 ## How it works

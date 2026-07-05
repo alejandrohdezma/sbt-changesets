@@ -65,7 +65,7 @@ object Json {
   def apply(value: String): Json = JsonString(value)
 
   /** Creates a JSON array from string items. */
-  def arr(items: String*): Json = JsonArray(items.map(JsonString))
+  def arr(items: String*): Json = JsonArray(items.map(JsonString.apply))
 
   /** Creates a JSON array from JSON items. */
   def arr(items: Json*)(implicit ev: DummyImplicit): Json = JsonArray(items)

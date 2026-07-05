@@ -72,7 +72,7 @@ object ChangesetPlugin extends AutoPlugin {
 
   import autoImport.*
 
-  override def projectSettings: Seq[Setting[_]] = Seq(
+  override def projectSettings = Seq(
     publish / skip      := Settings.skipPublish.value,
     version             := Settings.versionFromFile.value,
     versionScheme       := Some("early-semver"),
@@ -81,12 +81,12 @@ object ChangesetPlugin extends AutoPlugin {
     changesetCoordinate := s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
   )
 
-  override def buildSettings: Seq[Setting[_]] = Seq(
+  override def buildSettings = Seq(
     changesetBaseBranch     := "origin/main",
     changesetAffectedScopes := Seq("compile")
   )
 
-  override def globalSettings: Seq[Setting[_]] = Seq(
+  override def globalSettings = Seq(
     commands ++= Commands.all
   )
 

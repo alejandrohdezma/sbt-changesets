@@ -63,7 +63,6 @@ sealed trait VersionBump {
     case (VersionBump.Minor, _) => VersionBump.Minor
     case (_, VersionBump.Minor) => VersionBump.Minor
     case (VersionBump.Patch, _) => VersionBump.Patch
-    case (_, VersionBump.Patch) => VersionBump.Patch
   }
 
 }
