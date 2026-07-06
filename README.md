@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.8.0")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.8.1")
 ```
 
 The same coordinate is published for both **sbt 1.x** (Scala 2.12) and **sbt 2.x** (Scala 3).
@@ -87,6 +87,8 @@ When changesets are merged to main branch, run `changesetVersion`. This:
 
 Modules that are only bumped through cascade get auto-generated descriptions listing which dependencies changed.
 
+Modules listed in `ThisBuild / changesetAlwaysBump` (default `Seq()`) receive at least a **patch** bump whenever `changesetVersion` applies any bump — without needing `dependsOn` edges on the rest of the build. This fits modules that must be re-released with every release train, like a BOM aggregating the build's artifacts: they ride every train but never start one on their own (with no pending changesets, nothing is bumped). Modules already bumped — explicitly or through cascading — keep their existing bump; added entries get an auto-generated description listing the releases they accompany.
+
 ### 5. Publishing releases (CI)
 
 After version bumps are committed, `changesetMatrix` writes `target/changeset/matrix.json` — a JSON array of `{module, scala-version}` rows for every (module, Scala version) whose `VERSION` file just changed — which feeds a `publish` matrix that publishes each pair on its own runner in parallel via `sbt "++<scala-version> <module>/publish"`. A downstream `release-tag` job then runs once per distinct module, calls `extractLatestChangelog <module>`, and uses the result as the GitHub release notes.
@@ -95,7 +97,7 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.8.0` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.8.1` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -129,7 +131,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.8.0
+        uses: alejandrohdezma/sbt-changesets@v0.8.1
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -156,7 +158,7 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.8.0
+      - uses: alejandrohdezma/sbt-changesets@v0.8.1
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -185,7 +187,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.8.0
+      - uses: alejandrohdezma/sbt-changesets@v0.8.1
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -209,7 +211,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.8.0
+      - uses: alejandrohdezma/sbt-changesets@v0.8.1
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -234,7 +236,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.8.0
+      - uses: alejandrohdezma/sbt-changesets@v0.8.1
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -263,7 +265,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.8.0
+      - uses: alejandrohdezma/sbt-changesets@v0.8.1
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
