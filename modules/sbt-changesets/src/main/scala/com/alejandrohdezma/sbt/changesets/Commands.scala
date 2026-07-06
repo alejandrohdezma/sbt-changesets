@@ -104,16 +104,30 @@ object Commands {
        |  5. Writes a version summary to target/changeset/version-summary.json
        |
        |Cascading follows early-semver: for 0.x, minor is breaking; for 1.x+,
-       |major is breaking. Dependents receive at least the same bump level.""".stripMargin
+       |major is breaking. Dependents receive at least the same bump level.
+       |
+       |Modules listed in `changesetAlwaysBump` receive at least a patch bump
+       |whenever any bump is applied, without needing `dependsOn` edges.""".stripMargin
   ) { state =>
     val extracted      = Project.extract(state)
     val base           = extracted.get(ThisBuild / baseDirectory)
     val affectedScopes = extracted.get(ThisBuild / changesetAffectedScopes).toSet
+    val alwaysBumped   = extracted.get(ThisBuild / changesetAlwaysBump)
 
     val modules     = ModuleMetadata.from(state)
     val moduleNames = extractModuleNames(state)
-    val changesets  =
-      parseAndValidate(base / ".changeset", moduleNames, state.log).cascadeExpand(modules, affectedScopes)
+
+    val unknownAlwaysBumped = alwaysBumped.toSet.diff(moduleNames)
+    if (unknownAlwaysBumped.nonEmpty) {
+      unknownAlwaysBumped.toList.sorted
+        .foreach(name => state.log.error(s"Unknown module in `changesetAlwaysBump`: '$name'"))
+      throw new MessageOnlyException(s"${unknownAlwaysBumped.size} unknown module(s) in `changesetAlwaysBump`.")
+    }
+
+    val changesets =
+      parseAndValidate(base / ".changeset", moduleNames, state.log)
+        .cascadeExpand(modules, affectedScopes)
+        .alwaysBump(alwaysBumped, modules)
 
     // Apply bumps and collect version summary
     val summary = changesets.value.toList.sortBy(_._1).map { case (name, entry) =>

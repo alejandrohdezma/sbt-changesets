@@ -60,6 +60,14 @@ object ChangesetPlugin extends AutoPlugin {
         "is not affected. Use \"*\" to match any scope."
     }
 
+    val changesetAlwaysBump = settingKey[Seq[String]] {
+      "Names of modules that receive at least a patch bump whenever `changesetVersion` applies any bump. Useful " +
+        "for modules that must be re-released with every release train (e.g. a BOM aggregating the build's " +
+        "artifacts) without declaring `dependsOn` on the rest of the build. Modules already bumped — explicitly " +
+        "or through cascading — keep their existing bump. When no changesets are pending, no bump is added. " +
+        "Defaults to Seq()."
+    }
+
     val changesetCoordinate = settingKey[String] {
       "Maven-style coordinate for this module, used as the `coordinate` field in the validate-stage matrix " +
         "(consumed by `snapshot-comment`). Defaults to `\"org\" %% \"moduleName\" % \"version\"` for Scala modules " +
@@ -83,7 +91,8 @@ object ChangesetPlugin extends AutoPlugin {
 
   override def buildSettings = Seq(
     changesetBaseBranch     := "origin/main",
-    changesetAffectedScopes := Seq("compile")
+    changesetAffectedScopes := Seq("compile"),
+    changesetAlwaysBump     := Seq.empty
   )
 
   override def globalSettings = Seq(
