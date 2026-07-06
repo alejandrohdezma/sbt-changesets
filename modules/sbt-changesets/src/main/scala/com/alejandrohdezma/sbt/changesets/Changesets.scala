@@ -161,6 +161,35 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
     )
   }
 
+  /** Ensures every module in `names` receives at least a patch bump whenever this instance contains any bump.
+    *
+    * Intended for modules that must be re-released with every release train (e.g. a BOM aggregating the build's
+    * artifacts) without declaring `dependsOn` edges on the rest of the build. Modules already bumped \u2014 explicitly
+    * or through cascading \u2014 keep their existing entry. When this instance is empty, nothing is added, so an
+    * always-bumped module on its own never starts a release train.
+    *
+    * Added entries get an auto-generated description listing the releases they accompany.
+    *
+    * @param names
+    *   the module names to always bump
+    * @param modules
+    *   the full module metadata map from the SBT build, used for version lookups in the generated description
+    * @return
+    *   a new [[Changesets]] including a patch entry for each name not already present
+    */
+  def alwaysBump(names: Seq[String], modules: Map[String, ModuleMetadata]): Changesets =
+    if (value.isEmpty) this
+    else {
+      val alongside = value.toList
+        .sortBy(_._1)
+        .map { case (name, entry) => s"`$name@${entry.bump(modules(name).version)}`" }
+        .mkString(", ")
+
+      val entry = Changesets.Entry(VersionBump.Patch, s"- Released alongside: $alongside")
+
+      Changesets(names.distinct.filterNot(value.contains).foldLeft(value)(_.updated(_, entry)))
+    }
+
 }
 
 /** Parsing utilities for changeset markdown files.

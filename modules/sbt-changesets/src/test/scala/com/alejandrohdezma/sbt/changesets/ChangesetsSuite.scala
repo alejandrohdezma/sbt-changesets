@@ -346,6 +346,66 @@ class ChangesetsSuite extends munit.FunSuite {
     )
   }
 
+  // --- Changesets.alwaysBump ---
+
+  test("Changesets.alwaysBump - adds a patch entry with a release-train description") {
+    val modules = Map(
+      "A"   -> module("1.0.0"),
+      "B"   -> module("0.3.0"),
+      "bom" -> module("0.1.45")
+    )
+
+    val changesets = Changesets(
+      Map(
+        "A" -> Changesets.Entry(VersionBump.Minor, "feat A"),
+        "B" -> Changesets.Entry(VersionBump.Patch, "fix B")
+      )
+    )
+
+    val expected = Changesets.Entry(VersionBump.Patch, "- Released alongside: `A@1.1.0`, `B@0.3.1`")
+
+    assertEquals(changesets.alwaysBump(Seq("bom"), modules).get("bom"), Some(expected))
+  }
+
+  test("Changesets.alwaysBump - nothing is added when there are no bumps") {
+    val modules = Map("bom" -> module("0.1.45"))
+
+    assertEquals(Changesets(Map.empty).alwaysBump(Seq("bom"), modules), Changesets(Map.empty))
+  }
+
+  test("Changesets.alwaysBump - an existing entry is preserved") {
+    val modules = Map(
+      "A"   -> module("1.0.0"),
+      "bom" -> module("0.1.45")
+    )
+
+    val changesets = Changesets(
+      Map(
+        "A"   -> Changesets.Entry(VersionBump.Patch, "fix A"),
+        "bom" -> Changesets.Entry(VersionBump.Minor, "explicit bom change")
+      )
+    )
+
+    val expected = Changesets.Entry(VersionBump.Minor, "explicit bom change")
+
+    assertEquals(changesets.alwaysBump(Seq("bom"), modules).get("bom"), Some(expected))
+  }
+
+  test("Changesets.alwaysBump - description includes modules bumped through cascading") {
+    val modules = Map(
+      "A"   -> module("1.0.0", dependents = Set("B")),
+      "B"   -> module("2.0.0", dependencies = Set("A")),
+      "bom" -> module("0.1.45")
+    )
+
+    val expanded = Changesets(Map("A" -> Changesets.Entry(VersionBump.Patch, "fix A")))
+      .cascadeExpand(modules)
+      .alwaysBump(Seq("bom"), modules)
+
+    assertEquals(expanded.get("bom").map(_.description), Some("- Released alongside: `A@1.0.1`, `B@2.0.1`"))
+    assertEquals(expanded.get("bom").map(_.bump), Some(VersionBump.Patch))
+  }
+
   // --- Changesets.affects ---
 
   test("Changesets.affects - plain compile edge is in compile scope") {
