@@ -87,7 +87,7 @@ When changesets are merged to main branch, run `changesetVersion`. This:
 
 Modules that are only bumped through cascade get auto-generated descriptions listing which dependencies changed.
 
-Modules listed in `ThisBuild / changesetAlwaysBump` (default `Seq()`) receive at least a **patch** bump whenever `changesetVersion` applies any bump — without needing `dependsOn` edges on the rest of the build. This fits modules that must be re-released with every release train, like a BOM aggregating the build's artifacts: they ride every train but never start one on their own (with no pending changesets, nothing is bumped). Modules already bumped — explicitly or through cascading — keep their existing bump; added entries get an auto-generated description listing the releases they accompany.
+Modules with `changesetAlwaysBump := true` (default `false`) receive at least a **patch** bump whenever `changesetVersion` applies any bump — without needing `dependsOn` edges on the rest of the build. This fits modules that must be re-released with every release train, like a BOM aggregating the build's artifacts: they ride every train but never start one on their own (with no pending changesets, nothing is bumped). Modules already bumped — explicitly or through cascading — keep their existing bump; added entries get an auto-generated description listing the releases they accompany.
 
 ### 5. Publishing releases (CI)
 

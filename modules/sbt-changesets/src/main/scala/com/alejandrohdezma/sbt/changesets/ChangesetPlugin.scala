@@ -60,12 +60,12 @@ object ChangesetPlugin extends AutoPlugin {
         "is not affected. Use \"*\" to match any scope."
     }.withRank(KeyRanks.Invisible)
 
-    val changesetAlwaysBump = settingKey[Seq[String]] {
-      "Names of modules that receive at least a patch bump whenever `changesetVersion` applies any bump. Useful " +
+    val changesetAlwaysBump = settingKey[Boolean] {
+      "Whether this module receives at least a patch bump whenever `changesetVersion` applies any bump. Useful " +
         "for modules that must be re-released with every release train (e.g. a BOM aggregating the build's " +
-        "artifacts) without declaring `dependsOn` on the rest of the build. Modules already bumped — explicitly " +
-        "or through cascading — keep their existing bump. When no changesets are pending, no bump is added. " +
-        "Defaults to Seq()."
+        "artifacts) without declaring `dependsOn` on the rest of the build. A module already bumped — explicitly " +
+        "or through cascading — keeps its existing bump. When no changesets are pending, no bump is added. " +
+        "Defaults to false."
     }.withRank(KeyRanks.Invisible)
 
     val changesetCoordinate = settingKey[String] {
@@ -86,13 +86,13 @@ object ChangesetPlugin extends AutoPlugin {
     versionScheme       := Some("early-semver"),
     homepage            := scmInfo.value.map(_.browseUrl),
     scmInfo             := Settings.scmInfoFromGit.value,
+    changesetAlwaysBump := false,
     changesetCoordinate := s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
   )
 
   override def buildSettings = Seq(
     changesetBaseBranch     := "origin/main",
-    changesetAffectedScopes := Seq("compile"),
-    changesetAlwaysBump     := Seq.empty
+    changesetAffectedScopes := Seq("compile")
   )
 
   override def globalSettings = Seq(
