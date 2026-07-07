@@ -51,14 +51,14 @@ object ChangesetPlugin extends AutoPlugin {
 
     val changesetBaseBranch = settingKey[String] {
       "Remote branch reference used to detect changed modules (default: origin/main)"
-    }
+    }.withRank(KeyRanks.Invisible)
 
     val changesetAffectedScopes = settingKey[Seq[String]] {
       "Dependency scopes (the left-hand side of a `dependsOn` configuration, e.g. \"compile\" or \"test\") through " +
         "which a change cascades: a module is treated as affected when it depends on a changed module via one of " +
         "these scopes. Defaults to Seq(\"compile\"), so a module depending on a changed module only via test scope " +
         "is not affected. Use \"*\" to match any scope."
-    }
+    }.withRank(KeyRanks.Invisible)
 
     val changesetAlwaysBump = settingKey[Seq[String]] {
       "Names of modules that receive at least a patch bump whenever `changesetVersion` applies any bump. Useful " +
@@ -66,7 +66,7 @@ object ChangesetPlugin extends AutoPlugin {
         "artifacts) without declaring `dependsOn` on the rest of the build. Modules already bumped — explicitly " +
         "or through cascading — keep their existing bump. When no changesets are pending, no bump is added. " +
         "Defaults to Seq()."
-    }
+    }.withRank(KeyRanks.Invisible)
 
     val changesetCoordinate = settingKey[String] {
       "Maven-style coordinate for this module, used as the `coordinate` field in the validate-stage matrix " +
