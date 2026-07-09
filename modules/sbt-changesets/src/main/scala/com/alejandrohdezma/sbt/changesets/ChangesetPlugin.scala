@@ -23,13 +23,12 @@ import com.alejandrohdezma.sbt.modules.ModulesPlugin
 
 /** SBT AutoPlugin that provides changeset-based versioning for a multi-module build.
   *
-  * Requires `ModulesPlugin` to ensure `packageIsModule` and `publish / skip` settings are applied in the correct order.
+  * Requires `ModulesPlugin` for the `packageIsModule` setting used during version resolution.
   *
   * Provides:
   *
   *   - '''Per-module versioning''' from `VERSION` files in each module directory
   *   - '''SCM metadata''' (`scmInfo`, `homepage`) derived from the git remote URL
-  *   - '''Publish gating''' via `.publish` marker files (`publish / skip`)
   *   - '''Changeset commands''' for validating, versioning, and publishing modules
   *
   * ===Version Resolution===
@@ -81,7 +80,6 @@ object ChangesetPlugin extends AutoPlugin {
   import autoImport.*
 
   override def projectSettings = Seq(
-    publish / skip      := Settings.skipPublish.value,
     version             := Settings.versionFromFile.value,
     versionScheme       := Some("early-semver"),
     homepage            := scmInfo.value.map(_.browseUrl),

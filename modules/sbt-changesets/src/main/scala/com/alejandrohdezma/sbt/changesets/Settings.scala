@@ -45,17 +45,6 @@ object Settings {
 
   }
 
-  /** Skip publish for non-modules and for cross-build passes whose Scala version isn't in this project's
-    * `crossScalaVersions`.
-    *
-    * During an aggregated `+publish`, sbt iterates cross versions via root project aggregation. The root project's
-    * `scalaVersion` reflects the current `++` pass version. Skip if this project's `crossScalaVersions` doesn't include
-    * the current version to prevent double-publishing of modules that only target a subset of Scala versions.
-    */
-  val skipPublish: Def.Initialize[Boolean] = Def.setting {
-    !packageIsModule.value || !crossScalaVersions.value.contains((LocalRootProject / scalaVersion).value)
-  }
-
   /** Derives the version from a `VERSION` file in the module's base directory.
     *
     * By default the version includes a snapshot suffix of the form `<base>-<suffix>-SNAPSHOT`. The suffix is read from
