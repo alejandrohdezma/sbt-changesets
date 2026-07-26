@@ -55,8 +55,8 @@ object ChangesetPlugin extends AutoPlugin {
     val changesetAffectedScopes = settingKey[Seq[String]] {
       "Dependency scopes (the left-hand side of a `dependsOn` configuration, e.g. \"compile\" or \"test\") through " +
         "which a change cascades: a module is treated as affected when it depends on a changed module via one of " +
-        "these scopes. Defaults to Seq(\"compile\"), so a module depending on a changed module only via test scope " +
-        "is not affected. Use \"*\" to match any scope."
+        "these scopes. Defaults to Seq(\"compile\", \"bom\") — a module depending on a changed module only via test " +
+        "scope is not affected, while a BOM whose pins move is. Use \"*\" to match any scope."
     }.withRank(KeyRanks.Invisible)
 
     val changesetAlwaysBump = settingKey[Boolean] {
@@ -90,7 +90,7 @@ object ChangesetPlugin extends AutoPlugin {
 
   override def buildSettings = Seq(
     changesetBaseBranch     := "origin/main",
-    changesetAffectedScopes := Seq("compile")
+    changesetAffectedScopes := Seq("compile", "bom")
   )
 
   override def globalSettings = Seq(

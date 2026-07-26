@@ -90,11 +90,14 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
     *   the full module metadata map from the SBT build, used for dependency graph traversal and version lookups
     * @param affectedScopes
     *   the dependency-edge scopes through which bumps cascade (the left-hand side of each `dependsOn` mapping; `"*"`
-    *   matches any scope). Defaults to `Set("compile")`.
+    *   matches any scope). Defaults to `Set("compile", "bom")`.
     * @return
     *   a new [[Changesets]] containing both the original and cascaded entries
     */
-  def cascadeExpand(modules: Map[String, ModuleMetadata], affectedScopes: Set[String] = Set("compile")): Changesets = {
+  def cascadeExpand(
+      modules: Map[String, ModuleMetadata],
+      affectedScopes: Set[String] = Set("compile", "bom")
+  ): Changesets = {
 
     // Immutable snapshot of cascading bump computation.
     //

@@ -35,6 +35,19 @@ module-c {
         }
     ]
 }
+module-d {
+    added=[]
+    removed=[]
+    updated=[
+        {
+            configuration=bom
+            from="2.17.1"
+            name="jackson-bom"
+            organization="com.fasterxml.jackson"
+            to="2.17.2"
+        }
+    ]
+}
 sbt-build {
     added=[]
     removed=[]

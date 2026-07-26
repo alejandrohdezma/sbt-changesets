@@ -231,7 +231,7 @@ object Commands {
     """|Reads target/sbt-dependencies/.sbt-dependency-diff (HOCON) and creates
        |a .changeset/dependency-updates.md file with patch bumps for every
        |module whose diff contains at least one entry in one of the configured
-       |`changesetAffectedScopes` (default: `Seq("compile")`). Each entry's
+       |`changesetAffectedScopes` (default: `Seq("compile", "bom")`). Each entry's
        |`configuration` (defaulting to `"compile"` if absent — for diffs produced
        |by older versions of `sbt-dependencies`) is matched against the setting via
        |`Changesets.affects`, so e.g. test-only dependency updates do not produce
@@ -436,9 +436,9 @@ object Commands {
     *   - '''Untracked''': `git ls-files --others` (new files not yet added to git)
     *
     * A changed file only flags its module when it lives in a source set whose scope is listed in
-    * `changesetAffectedScopes` (default `Seq("compile")`); changes confined to other source sets (e.g. `src/test`) are
-    * ignored. Files outside every source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts
-    * every source set.
+    * `changesetAffectedScopes` (default `Seq("compile", "bom")`); changes confined to other source sets (e.g.
+    * `src/test`) are ignored. Files outside every source set (e.g. `build.sbt`, `VERSION`) always flag the module, and
+    * `"*"` counts every source set.
     *
     * Only returns names that correspond to actual SBT modules (validated via `packageIsModule` setting).
     */
