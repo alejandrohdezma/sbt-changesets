@@ -9,17 +9,18 @@ $ exec git commit --no-gpg-sign -m "Initial commit"
 $ mkdir target/sbt-dependencies
 $ copy-file changes/.sbt-dependency-diff target/sbt-dependencies/.sbt-dependency-diff
 
-# Default `changesetAffectedScopes := Seq("compile")`:
+# Default `changesetAffectedScopes := Seq("compile", "bom")`:
 #   - module-a (compile update) -> affected
 #   - module-b (test-only add)  -> NOT affected
 #   - module-c (no configuration field; legacy diffs from older sbt-dependencies default to "compile") -> affected
+#   - module-d (bom update)     -> affected
 > changesetFromDependencyDiff
 $ exists .changeset/dependency-updates.md
 $ exec diff -u expected-changeset .changeset/dependency-updates.md
 
 # Opt-in to also treat test-scope updates as affected: module-b now appears too.
 $ delete .changeset/dependency-updates.md
-> set ThisBuild / changesetAffectedScopes := Seq("compile", "test")
+> set ThisBuild / changesetAffectedScopes += "test"
 > changesetFromDependencyDiff
 $ exists .changeset/dependency-updates.md
 $ exec diff -u expected-changeset-with-test-scope .changeset/dependency-updates.md

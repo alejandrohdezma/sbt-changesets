@@ -336,7 +336,7 @@ class ChangesetsSuite extends munit.FunSuite {
 
     val changesets = Changesets(Map("A" -> Changesets.Entry(VersionBump.Patch, "fix A")))
 
-    // By default (Set("compile")) a test-only dependent does not cascade
+    // By default (Set("compile", "bom")) a test-only dependent does not cascade
     assertEquals(changesets.cascadeExpand(modules).get("B"), None)
 
     // ...but it does when "test" is among the affected scopes

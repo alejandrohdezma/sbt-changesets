@@ -1,6 +1,7 @@
 ---
 "module-a": patch
 "module-c": patch
+"module-d": patch
 ---
 
 Update dependencies.
