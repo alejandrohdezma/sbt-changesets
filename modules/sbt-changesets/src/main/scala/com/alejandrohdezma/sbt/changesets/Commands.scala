@@ -161,7 +161,9 @@ object Commands {
     "changesetMatrix",
     "changesetMatrix <validate|release>" -> "Outputs the stage-appropriate work matrix as JSON.",
     """|For `validate`: validates that every changed module has a changeset entry,
-       |computes affected modules (changed + transitive dependents), expands each
+       |computes affected modules (changed + transitive dependents, plus every
+       |`changesetAlwaysBump` module when that set is non-empty — they are released
+       |alongside any bump, so they must be validated alongside it too), expands each
        |by `crossScalaVersions`, and attaches snapshot `{version, coordinate}` per
        |row. Set CHANGESET_SKIP_VALIDATION=true to skip the entry check while
        |still computing affected.
@@ -349,8 +351,16 @@ object Commands {
       name -> metadata.dependents.filter(Changesets.affects(_, affectedScopes)).map(_.name)
     }
 
+    val alwaysBumped = extracted.structure.allProjectRefs
+      .filter(ref => extracted.get(ref / packageIsModule))
+      .filter(ref => extracted.get(ref / changesetAlwaysBump))
+      .map(ref => extracted.get(ref / Keys.name))
+
     val seed     = changed ++ changesets.keys
-    val affected = Changesets.affectedClosure(seed, directDependents)
+    val affected = {
+      val closure = Changesets.affectedClosure(seed, directDependents)
+      if (closure.isEmpty) closure else closure ++ alwaysBumped
+    }
 
     val rows = affected.toList.sorted.flatMap { name =>
       refs.get(name).toList.flatMap { ref =>
