@@ -161,12 +161,17 @@ object Commands {
     "changesetMatrix",
     "changesetMatrix <validate|release>" -> "Outputs the stage-appropriate work matrix as JSON.",
     """|For `validate`: validates that every changed module has a changeset entry,
-       |computes affected modules (changed + transitive dependents, plus every
-       |`changesetAlwaysBump` module when that set is non-empty — they are released
-       |alongside any bump, so they must be validated alongside it too), expands each
-       |by `crossScalaVersions`, and attaches snapshot `{version, coordinate}` per
-       |row. Set CHANGESET_SKIP_VALIDATION=true to skip the entry check while
-       |still computing affected.
+       |computes affected modules (changed + transitive dependents through every
+       |scope, plus every `changesetAlwaysBump` module whenever the change releases
+       |anything at all — they are released alongside any bump, so they must be
+       |validated alongside it too), expands each by `crossScalaVersions`, and
+       |attaches snapshot
+       |`{version, coordinate}` per row. Modules that this change will never release
+       |— reachable only through scopes outside `changesetAffectedScopes`, e.g. a
+       |`dependsOn(x % Test)` consumer — are included as `validate-only` rows so
+       |they get built and tested without publishing a snapshot. Set
+       |CHANGESET_SKIP_VALIDATION=true to skip the entry check while still computing
+       |affected.
        |
        |For `release`: detects modules whose VERSION file changed in the last
        |commit, expands by `crossScalaVersions`, and attaches release
@@ -193,8 +198,9 @@ object Commands {
   ) { (state, args) =>
     args match {
       case VersionBump(bump) :: descriptionWords if descriptionWords.nonEmpty =>
-        val base    = Project.extract(state).get(ThisBuild / baseDirectory)
-        val changed = changedModules(state)
+        val extracted = Project.extract(state)
+        val base      = extracted.get(ThisBuild / baseDirectory)
+        val changed   = changedModules(state, extracted.get(ThisBuild / changesetAffectedScopes).toSet)
 
         if (changed.isEmpty) throw new MessageOnlyException("No modules have changed. Nothing to add.")
 
@@ -312,7 +318,13 @@ object Commands {
   // ─── Internal helpers ─────────────────────────
 
   /** Validates changesets, computes affected modules (changed + transitive dependents) and emits a
-    * `[{module, scala-version, version, coordinate}, ...]` matrix to `target/changeset/matrix.json`.
+    * `[{module, scala-version, version, coordinate, validate-only}, ...]` matrix to `target/changeset/matrix.json`.
+    *
+    * Unlike the release cascade, this matrix follows `dependsOn` edges through '''every''' scope and treats a change to
+    * '''any''' source set as a change: a module whose tests won't compile against a changed dependency must be built,
+    * and so must a module whose own test sources changed. Rows that are only reachable through scopes outside
+    * `changesetAffectedScopes` — i.e. modules that will never be released because of this change — carry
+    * `validate-only: true` so consumers can build and test them without publishing a snapshot.
     *
     * The `version` and `coordinate` come from sbt's `version` and `organization` settings — i.e. the snapshot version
     * including any `SNAPSHOT_SUFFIX`.
@@ -324,7 +336,7 @@ object Commands {
     val modules        = ModuleMetadata.from(state)
     val refs           = moduleRefs(state)
 
-    val changed    = changedModules(state)
+    val changed    = changedModules(state, affectedScopes)
     val changesets = parseAndValidate(base / ".changeset", refs.keySet, state.log)
 
     val skipValidation = sys.env.get("CHANGESET_SKIP_VALIDATION").contains("true")
@@ -347,7 +359,11 @@ object Commands {
       }
     }
 
-    val directDependents = modules.map { case (name, metadata) =>
+    val allDependents = modules.map { case (name, metadata) =>
+      name -> metadata.dependents.map(_.name)
+    }
+
+    val releaseDependents = modules.map { case (name, metadata) =>
       name -> metadata.dependents.filter(Changesets.affects(_, affectedScopes)).map(_.name)
     }
 
@@ -356,10 +372,14 @@ object Commands {
       .filter(ref => extracted.get(ref / changesetAlwaysBump))
       .map(ref => extracted.get(ref / Keys.name))
 
-    val seed     = changed ++ changesets.keys
-    val affected = {
-      val closure = Changesets.affectedClosure(seed, directDependents)
+    val releaseAffected = {
+      val closure = Changesets.affectedClosure(changed ++ changesets.keys, releaseDependents)
       if (closure.isEmpty) closure else closure ++ alwaysBumped
+    }
+
+    val affected = {
+      val closure = Changesets.affectedClosure(changedModules(state, Set("*")) ++ changesets.keys, allDependents)
+      if (releaseAffected.isEmpty) closure else closure ++ alwaysBumped
     }
 
     val rows = affected.toList.sorted.flatMap { name =>
@@ -369,7 +389,8 @@ object Commands {
             "module"        := name,
             "scala-version" := sv,
             "version"       := extracted.get(ref / version),
-            "coordinate"    := extracted.get(ref / changesetCoordinate)
+            "coordinate"    := extracted.get(ref / changesetCoordinate),
+            "validate-only" := !releaseAffected.contains(name)
           )
         }
       }
@@ -445,19 +466,20 @@ object Commands {
     *   - '''Uncommitted''': `git diff HEAD` (staged and unstaged changes to tracked files)
     *   - '''Untracked''': `git ls-files --others` (new files not yet added to git)
     *
-    * A changed file only flags its module when it lives in a source set whose scope is listed in
-    * `changesetAffectedScopes` (default `Seq("compile", "bom")`); changes confined to other source sets (e.g.
-    * `src/test`) are ignored. Files outside every source set (e.g. `build.sbt`, `VERSION`) always flag the module, and
-    * `"*"` counts every source set.
+    * A changed file only flags its module when it lives in a source set whose scope is listed in `scopes`; changes
+    * confined to other source sets (e.g. `src/test` when only `"compile"` is given) are ignored. Files outside every
+    * source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts every source set.
     *
     * Only returns names that correspond to actual SBT modules (validated via `packageIsModule` setting).
+    *
+    * @param scopes
+    *   the source-set scopes whose changes count (`"*"` counts every source set)
     */
-  def changedModules(state: State): Set[String] = {
+  def changedModules(state: State, scopes: Set[String]): Set[String] = {
     val extracted = Project.extract(state)
 
-    val base   = extracted.get(ThisBuild / baseDirectory)
-    val refs   = moduleRefs(state)
-    val scopes = extracted.get(ThisBuild / changesetAffectedScopes).toSet
+    val base = extracted.get(ThisBuild / baseDirectory)
+    val refs = moduleRefs(state)
 
     val projects = extracted.structure.allProjects.map(p => p.id -> p).toMap
 

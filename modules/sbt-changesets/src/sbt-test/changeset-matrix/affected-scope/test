@@ -5,11 +5,12 @@ $ exec git config user.name "Test"
 $ exec git add .
 $ exec git commit --no-gpg-sign -m "Initial commit"
 
-# Default: a change to `base` affects only its compile-scope dependent, not the test-scoped one
+# Default: a change to `base` validates both dependents, but the test-scoped one is
+# `validate-only` since it won't be released
 > changesetMatrix validate
 $ must-mirror target/changeset/matrix.json expected/matrix-default.json
 
-# Opt-in: also treat test-scope dependents as affected
+# Opting `test` in makes the test-scope dependent releasable, so it stops being `validate-only`
 > set ThisBuild / changesetAffectedScopes := Seq("compile", "test")
 > changesetMatrix validate
 $ must-mirror target/changeset/matrix.json expected/matrix-include.json

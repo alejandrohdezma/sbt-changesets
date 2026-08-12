@@ -1,0 +1,9 @@
+[
+  {
+    "module": "foo",
+    "scala-version": "3.3.7",
+    "version": "1.0.0-abc123-SNAPSHOT",
+    "coordinate": "\"com.example\" %% \"foo\" % \"1.0.0-abc123-SNAPSHOT\"",
+    "validate-only": true
+  }
+]

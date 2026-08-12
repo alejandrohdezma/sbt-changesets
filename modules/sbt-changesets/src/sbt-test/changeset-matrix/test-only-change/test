@@ -5,9 +5,12 @@ $ exec git config user.name "Test"
 $ exec git add .
 $ exec git commit --no-gpg-sign -m "Initial commit"
 
-# An untracked test-only change does NOT require a changeset under the default scopes (compile)
+# An untracked test-only change does NOT require a changeset under the default scopes (compile),
+# but the module is still validated - as a `validate-only` row, since it won't be released. The
+# `changesetAlwaysBump` module stays out: it rides release trains, and this change starts none.
 $ copy-file changes/TestOnly.scala modules/foo/src/test/scala/com/example/TestOnly.scala
 > changesetMatrix validate
+$ must-mirror target/changeset/matrix.json expected/matrix-test-only.json
 
 # Opting `test` scope in makes the same change require a changeset (foo has none) -> fails
 > set ThisBuild / changesetAffectedScopes := Seq("compile", "test")
