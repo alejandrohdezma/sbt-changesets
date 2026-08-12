@@ -54,9 +54,11 @@ object ChangesetPlugin extends AutoPlugin {
 
     val changesetAffectedScopes = settingKey[Seq[String]] {
       "Dependency scopes (the left-hand side of a `dependsOn` configuration, e.g. \"compile\" or \"test\") through " +
-        "which a change cascades: a module is treated as affected when it depends on a changed module via one of " +
-        "these scopes. Defaults to Seq(\"compile\", \"bom\") — a module depending on a changed module only via test " +
-        "scope is not affected, while a BOM whose pins move is. Use \"*\" to match any scope."
+        "which a change cascades into a *release*: a module is bumped when it depends on a changed module via one " +
+        "of these scopes, and a change confined to a source set outside them needs no changeset. Defaults to " +
+        "Seq(\"compile\", \"bom\") — a module depending on a changed module only via test scope is not released, " +
+        "while a BOM whose pins move is. Use \"*\" to match any scope. Note this does not narrow CI: the " +
+        "validate-stage matrix always covers every scope, marking such rows `validate-only`."
     }.withRank(KeyRanks.Invisible)
 
     val changesetAlwaysBump = settingKey[Boolean] {

@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ""
   matrix:
-    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinate`) and `release-tag` (release-stage rows with `version` and `changelog`)."
+    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinate` and `validate-only`) and `release-tag` (release-stage rows with `version` and `changelog`)."
     required: false
     default: ""
   pr-number:
@@ -40,7 +40,7 @@ inputs:
 
 outputs:
   matrix:
-    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`). When `stage == 'release'`, an array of `{module, scala-version, version, changelog}` rows (publish-matrix dimensions + release-tag note body). Empty array otherwise. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
+    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate, validate-only}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`; `validate-only: true` marks a module that must be built and tested but not published, because this change will never release it). When `stage == 'release'`, an array of `{module, scala-version, version, changelog}` rows (publish-matrix dimensions + release-tag note body). Empty array otherwise. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.matrix }}
   stage:
     description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with VERSION bumps to publish). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
@@ -57,9 +57,13 @@ runs:
     #     (push with VERSION bumps), or empty (nothing to do). Consumers gate every
     #     downstream job on this single value.
     #   - `matrix`: the work matrix for this run. Shape depends on `stage`:
-    #       - `validate`: `[{module, scala-version, version, coordinate}, ...]` —
-    #         publish-matrix dimensions plus snapshot Maven coordinate for
-    #         `snapshot-comment`.
+    #       - `validate`: `[{module, scala-version, version, coordinate,
+    #         validate-only}, ...]` — publish-matrix dimensions plus snapshot Maven
+    #         coordinate for `snapshot-comment`. `validate-only: true` rows must be
+    #         built and tested but not published: the module is only reachable from
+    #         the change through scopes outside `changesetAffectedScopes` (e.g. a
+    #         `dependsOn(x % Test)` consumer), or only its own test sources changed.
+    #         Gate the snapshot publish step on `!matrix.validate-only`.
     #       - `release`:  `[{module, scala-version, version, changelog}, ...]` —
     #         publish-matrix dimensions plus release-tag note body.
     #       - otherwise: `[]`.
@@ -147,8 +151,9 @@ runs:
     # ─── Snapshot-comment ────────────────────────
     # Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix
     # snapshot publish. Consumes the validate-stage `matrix` from `detect` — rows
-    # carry `module`, `scala-version`, `version`, and `coordinate`; this step
-    # dedupes by module so each release is listed once.
+    # carry `module`, `scala-version`, `version`, `coordinate`, and `validate-only`;
+    # this step drops `validate-only` rows (they publish no snapshot) and dedupes by
+    # module so each release is listed once. Posts nothing when no rows remain.
 
     - name: Post snapshot coordinates comment
       if: inputs.mode == 'snapshot-comment'
@@ -159,7 +164,14 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         MATRIX: ${{ inputs.matrix }}
       run: |
-        BLOCKS=$(echo "$MATRIX" | jq -r 'group_by(.module) | map(.[0]) | .[] | "```scala\n\(.coordinate)\n```"')
+        PUBLISHED=$(echo "$MATRIX" | jq -c 'map(select(."validate-only" != true))')
+
+        if [ "$PUBLISHED" = "[]" ]; then
+          echo "No snapshots were published (every affected module is validate-only). Skipping comment."
+          exit 0
+        fi
+
+        BLOCKS=$(echo "$PUBLISHED" | jq -r 'group_by(.module) | map(.[0]) | .[] | "```scala\n\(.coordinate)\n```"')
         BODY_FILE=$(mktemp)
         cat > "$BODY_FILE" <<EOF
         ### Snapshot releases
