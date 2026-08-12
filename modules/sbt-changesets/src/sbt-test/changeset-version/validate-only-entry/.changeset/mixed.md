@@ -1,8 +1,6 @@
 ---
 "module-a": patch
 "module-b": validate-only
-"module-c": patch
-"module-d": patch
 ---
 
 Update dependencies.
