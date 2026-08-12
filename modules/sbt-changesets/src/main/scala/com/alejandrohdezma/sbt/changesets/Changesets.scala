@@ -31,8 +31,11 @@ import com.alejandrohdezma.sbt.modules.ModuleMetadata
   *
   * @param value
   *   the underlying map from module name to changeset entry
+  * @param validateOnly
+  *   modules declared with the `validate-only` marker instead of a bump. They are deliberately kept out of `value` so
+  *   no part of the release path can see them: they are validated by CI and never released.
   */
-case class Changesets(value: Map[String, Changesets.Entry]) {
+case class Changesets(value: Map[String, Changesets.Entry], validateOnly: Set[String] = Set.empty) {
 
   /** Returns the changeset entry for the given module name, if present. */
   def get(name: String): Option[Changesets.Entry] = value.get(name)
@@ -54,7 +57,7 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
     *   `Right` with this instance if all modules are known, or `Left` with sorted error messages for unknown modules
     */
   def validate(knownModules: Set[String]): Either[List[String], Changesets] = {
-    val unknown = value.keySet.diff(knownModules)
+    val unknown = (value.keySet ++ validateOnly).diff(knownModules)
     if (unknown.isEmpty) Right(this)
     else Left(unknown.toList.sorted.map(name => s"Unknown module in changeset: '$name'"))
   }
@@ -146,22 +149,20 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
 
     val State(bumps, triggers) = loop(State(value.map { case (name, entry) => name -> entry.bump }, Map.empty))
 
-    Changesets(
-      bumps.map { case (name, bump) =>
-        val description = get(name).map(_.description).getOrElse {
-          triggers
-            .getOrElse(name, Nil)
-            .map { dep =>
-              val oldVer = modules(dep).version
-              val newVer = bumps(dep)(oldVer)
-              s"- Updated dependency: $dep ($oldVer \u2192 $newVer)"
-            }
-            .mkString("\n")
-        }
-
-        (name, Changesets.Entry(bump, description))
+    copy(value = bumps.map { case (name, bump) =>
+      val description = get(name).map(_.description).getOrElse {
+        triggers
+          .getOrElse(name, Nil)
+          .map { dep =>
+            val oldVer = modules(dep).version
+            val newVer = bumps(dep)(oldVer)
+            s"- Updated dependency: $dep ($oldVer \u2192 $newVer)"
+          }
+          .mkString("\n")
       }
-    )
+
+      (name, Changesets.Entry(bump, description))
+    })
   }
 
   /** Ensures every module in `names` receives at least a patch bump whenever this instance contains any bump.
@@ -190,7 +191,7 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
 
       val entry = Changesets.Entry(VersionBump.Patch, s"- Released alongside: $alongside")
 
-      Changesets(names.distinct.filterNot(value.contains).foldLeft(value)(_.updated(_, entry)))
+      copy(value = names.distinct.filterNot(value.contains).foldLeft(value)(_.updated(_, entry)))
     }
 
 }
@@ -201,15 +202,23 @@ case class Changesets(value: Map[String, Changesets.Entry]) {
   * {{{
   * ---
   * "module-name": patch
+  * "other-module": validate-only
   * ---
   *
   * Description of the change.
   * }}}
+  *
+  * A bump (`patch`, `minor`, `major`) releases the module. The `validate-only` marker instead asks CI to build and test
+  * the module without ever releasing it — for a module affected by the change through something that does not alter
+  * what it publishes, such as an update to one of its test-scoped dependencies.
   */
 object Changesets {
 
   /** Placeholder description written by `changesetAdd`. Must be replaced before merging. */
   final val TemplateDescription = "TODO: Describe your changes here"
+
+  /** Frontmatter value marking a module that must be validated by CI but never released. */
+  final val ValidateOnlyMarker = "validate-only"
 
   /** A parsed changeset entry for a single module.
     *
@@ -253,19 +262,25 @@ object Changesets {
 
           frontmatter.map {
             case EntryPattern(name, VersionBump(bump)) =>
-              Right(name -> Entry(bump, body))
+              Right(name -> Some(Entry(bump, body)))
+            case EntryPattern(name, ValidateOnlyMarker) =>
+              Right(name -> None)
             case line =>
               Left(s"Malformed frontmatter line in `${file.getName}`: '$line'")
           }
         }
-        .toList
-        .foldLeft[Either[List[String], Map[String, Entry]]](Right(Map.empty)) {
-          case (Right(entries), Right(entry)) => Right(entries + entry)
-          case (Left(errors), Left(error))    => Left(errors :+ error)
-          case (Left(errors), Right(_))       => Left(errors)
-          case (Right(_), Left(error))        => Left(List(error))
-        }
-        .map(Changesets(_))
+        .toList match {
+        case lines if lines.exists(_.isLeft) => Left(lines.collect { case Left(error) => error })
+        case lines                           =>
+          val parsed = lines.collect { case Right(line) => line }
+
+          Right(
+            Changesets(
+              parsed.collect { case (name, Some(entry)) => name -> entry }.toMap,
+              parsed.collect { case (name, None) => name }.toSet
+            )
+          )
+      }
 
   /** Extracts the changelog entry for a specific version from a CHANGELOG.md file.
     *

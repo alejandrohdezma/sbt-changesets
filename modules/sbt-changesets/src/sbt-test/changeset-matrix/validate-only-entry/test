@@ -1,0 +1,19 @@
+# Initialize git repo and create initial commit with all files
+$ exec git init
+$ exec git config user.email "test@test.com"
+$ exec git config user.name "Test"
+$ exec git add .
+$ exec git commit --no-gpg-sign -m "Initial commit"
+
+# Both modules are validated; only the bumped one is publishable
+> changesetMatrix validate
+$ must-mirror target/changeset/matrix.json expected/matrix.json
+
+# A `validate-only` entry does not cover a `src/main` change: that still needs a bump
+$ copy-file changes/MainChange.scala modules/module-b/src/main/scala/com/example/MainChange.scala
+-> changesetMatrix validate
+
+# A typo in a `validate-only` line is caught like any other unknown module
+$ delete modules/module-b/src/main/scala/com/example/MainChange.scala
+$ copy-file changes/unknown.md .changeset/unknown.md
+-> changesetMatrix validate

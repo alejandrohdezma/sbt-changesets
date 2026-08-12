@@ -11,7 +11,7 @@ $ copy-file changes/.sbt-dependency-diff target/sbt-dependencies/.sbt-dependency
 
 # Default `changesetAffectedScopes := Seq("compile", "bom")`:
 #   - module-a (compile update) -> affected
-#   - module-b (test-only add)  -> NOT affected
+#   - module-b (test-only add)  -> NOT affected, so `validate-only`: built by CI, never released
 #   - module-c (no configuration field; legacy diffs from older sbt-dependencies default to "compile") -> affected
 #   - module-d (bom update)     -> affected
 > changesetFromDependencyDiff
