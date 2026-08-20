@@ -40,7 +40,7 @@ inputs:
 
 outputs:
   matrix:
-    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate, validate-only}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`; `validate-only: true` marks a module that must be built and tested but not published, because this change will never release it). When `stage == 'release'`, an array of `{module, scala-version, version}` rows (publish-matrix dimensions only; the release notes travel to `release-tag` as the `changeset-changelogs` artifact, never through this output, since a job output containing a masked secret is silently dropped). Empty array otherwise. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
+    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate, validate-only}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`; `validate-only: true` marks a module that must be built and tested but not published, because this change will never release it). When `stage == 'release'`, an array of `{module, scala-version, version}` rows (publish-matrix dimensions only; the release notes travel to `release-tag` as the `changeset-changelogs` artifact). Empty array otherwise. Rendered as `\uXXXX`-escaped JSON so that no masked secret can appear literally in it — a job output containing one is silently dropped by the runner — which `fromJson`, `jq` and `JSON.parse` all decode transparently. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.matrix }}
   stage:
     description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with VERSION bumps to publish). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
@@ -66,11 +66,15 @@ runs:
     #         Gate the snapshot publish step on `!matrix.validate-only`.
     #       - `release`:  `[{module, scala-version, version}, ...]` — publish-matrix
     #         dimensions only. The release notes for those modules travel to
-    #         `release-tag` mode as the `changeset-changelogs` artifact, never
-    #         through this output: GitHub Actions silently drops a job output whose
-    #         value contains a masked secret, and a single changelog sentence
-    #         containing a credential as a substring would sink the whole release.
+    #         `release-tag` mode as the `changeset-changelogs` artifact, keeping
+    #         unbounded prose out of a job output capped at 1 MB.
     #       - otherwise: `[]`.
+    #     Emitted as `\uXXXX`-escaped JSON: equivalent for `fromJson`, `jq` and
+    #     `JSON.parse`, but the text carries no literal substring of the values in
+    #     it. The runner silently discards a job output whose value contains a
+    #     masked secret, and that failure is invisible — the run fails with no
+    #     failing job, because the consumer's `fromJson` never evaluates — so a
+    #     module named after a secret must not be able to sink a release.
     # Run on every event; the consumer routes the single matrix into the right
     # downstream jobs by gating on `stage`.
 
@@ -93,7 +97,7 @@ runs:
               fi
               exit 1
             }
-            MATRIX=$(jq -c . target/changeset/matrix.json)
+            MATRIX=$(cat target/changeset/matrix-escaped.json)
             [ "$MATRIX" != "[]" ] && STAGE="validate"
             ;;
           push)
@@ -101,7 +105,7 @@ runs:
               STAGE="apply-changesets"
             else
               sbt "changesetMatrix release"
-              MATRIX=$(jq -c . target/changeset/matrix.json)
+              MATRIX=$(cat target/changeset/matrix-escaped.json)
               [ "$MATRIX" != "[]" ] && STAGE="release"
             fi
             ;;

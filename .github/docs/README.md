@@ -106,6 +106,8 @@ Modules with `changesetAlwaysBump := true` (default `false`) receive at least a 
 
 After version bumps are committed, `changesetMatrix release` writes `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version}` rows for every (module, Scala version) whose `VERSION` file just changed — which feeds a `publish` matrix that publishes each pair on its own runner in parallel via `sbt "++<scala-version> <module>/publish"`. It also writes `target/changeset/changelogs.json`, a `{"<module>": "<notes>"}` object holding each module's `## <version>` entry, which a downstream `release-tag` job uses as the GitHub release notes.
 
+Both stages write one more file, `target/changeset/matrix-escaped.json`: the same matrix on a single line with every string character written as a `\uXXXX` escape. That is the copy meant for a GitHub Actions job output — see [Handing the matrix to a job output](#handing-the-matrix-to-a-job-output).
+
 The composite [GitHub Action](#github-actions) bundles this flow into `detect` mode, which (when the workflow runs on a Version Packages PR merge) emits `matrix` (for `publish`) alongside its PR-side outputs, and hands the notes to `release-tag` as an artifact.
 
 ## GitHub Actions
@@ -122,9 +124,15 @@ Validates that all changed modules have changeset entries and emits exactly two 
   - `stage == 'release'`: array of `{module, scala-version, version}` rows carrying the publish-matrix dimensions. Plug into `matrix.include` for the publish job; pass to `release-tag` mode.
   - Otherwise: empty array.
 
-The release notes of those modules do **not** travel through the `matrix` output. They are written to `target/changeset/changelogs.json` and uploaded as the `changeset-changelogs` artifact, which `release-tag` mode downloads on the other side. GitHub Actions silently drops a job output whose value contains a masked secret, so a single changelog sentence containing a credential as a substring would otherwise sink the whole release — and the failure is invisible: the run is marked failed with no failing job, because `fromJson('')` fails before the consuming job is created.
+The release notes of those modules do **not** travel through the `matrix` output. They are written to `target/changeset/changelogs.json` and uploaded as the `changeset-changelogs` artifact, which `release-tag` mode downloads on the other side, keeping unbounded prose out of an output that GitHub caps at 1 MB.
 
 Run on every event. The consumer gates each downstream job on `stage` and feeds `matrix` directly into all matrix-style consumers and post-processing modes.
+
+#### Handing the matrix to a job output
+
+The `matrix` output is `\uXXXX`-escaped JSON: `[{"\u006d\u006f\u0064\u0075\u006c\u0065":"\u0061"}]` rather than `[{"module":"a"}]`. Equivalent JSON — `fromJson`, `jq` and `JSON.parse` all decode it to the same values, and `matrix.include` fans out from it exactly as before — but the text carries no literal substring of the values inside it.
+
+That matters because of how the runner treats job outputs: it **silently discards** one whose value contains a masked secret, warning only inside the producing job's log (`Skip output 'matrix' since it may contain secret`). A `publish` job whose matrix came from that output then fails to evaluate `fromJson('')`, so the job is never created and the whole run is marked failed **with no failing job** — nothing to click on, nothing in the summary. A module named after one of the repository's secrets, or a version string matching one, is enough to trigger it. With every character escaped there is nothing left for the masker to match, so the case cannot arise and consumers need no guard job.
 
 ```yaml
 # .github/workflows/ci.yaml
@@ -308,5 +316,5 @@ The same `matrix` output feeds both `publish` (as `matrix.include`, ignoring the
 
 | Output | Modes | Description |
 |---|---|---|
-| `matrix` | `detect` | Stage-dependent work matrix. Validate stage: `{module, scala-version, version, coordinate, validate-only}` rows. Release stage: `{module, scala-version, version}` rows. Empty otherwise |
+| `matrix` | `detect` | Stage-dependent work matrix, as [`\uXXXX`-escaped JSON](#handing-the-matrix-to-a-job-output). Validate stage: `{module, scala-version, version, coordinate, validate-only}` rows. Release stage: `{module, scala-version, version}` rows. Empty otherwise |
 | `stage` | `detect` | Dispatch classification: `validate`, `apply-changesets`, `release`, or empty. Gate every downstream job on this |

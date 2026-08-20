@@ -127,6 +127,33 @@ class JsonSuite extends munit.FunSuite {
     assertEquals(Json.arr(items *).show(), expected)
   }
 
+  // --- Json.showEscaped ---
+
+  test("Json.showEscaped - every character of a string becomes a \\uXXXX escape") {
+    assertEquals(Json("ab").showEscaped, "\"\\u0061\\u0062\"")
+  }
+
+  test("Json.showEscaped - keys are escaped, booleans and structure stay literal") {
+    val json = Json.arr(Json.obj("a" -> Json("b"), "c" -> Json(true)))
+
+    assertEquals(json.showEscaped, "[{\"\\u0061\":\"\\u0062\",\"\\u0063\":true}]")
+  }
+
+  test("Json.showEscaped - leaves no literal substring of the values it carries") {
+    val json = Json.arr(Json.obj("module" -> Json("readers take a TypeName")))
+
+    assert(!json.showEscaped.contains("reader"))
+  }
+
+  test("Json.showEscaped - characters that `show` escapes need no special case") {
+    assertEquals(Json("\"\\\n").showEscaped, "\"\\u0022\\u005c\\u000a\"")
+  }
+
+  test("Json.showEscaped - empty array and object") {
+    assertEquals(Json.arr(Seq.empty[Json] *).showEscaped, "[]")
+    assertEquals(Json.obj().showEscaped, "{}")
+  }
+
   // --- := syntax ---
 
   test(":= syntax produces correct pair") {

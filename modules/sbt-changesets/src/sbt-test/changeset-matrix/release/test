@@ -19,3 +19,6 @@ $ must-mirror target/changeset/matrix.json expected/matrix.json
 
 # Verify the changelogs are emitted separately, one entry per changed module
 $ must-mirror target/changeset/changelogs.json expected/changelogs.json
+
+# Verify the escaped copy handed to the GitHub Actions job output is emitted too
+$ must-mirror target/changeset/matrix-escaped.json expected/matrix-escaped.json
