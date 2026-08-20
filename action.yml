@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ""
   matrix:
-    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinate` and `validate-only`) and `release-tag` (release-stage rows with `version` and `changelog`)."
+    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinate` and `validate-only`) and `release-tag` (release-stage rows with `version`; the notes body comes from the `changeset-changelogs` artifact instead)."
     required: false
     default: ""
   pr-number:
@@ -40,7 +40,7 @@ inputs:
 
 outputs:
   matrix:
-    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate, validate-only}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`; `validate-only: true` marks a module that must be built and tested but not published, because this change will never release it). When `stage == 'release'`, an array of `{module, scala-version, version, changelog}` rows (publish-matrix dimensions + release-tag note body). Empty array otherwise. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
+    description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinate, validate-only}` rows (publish-matrix dimensions + snapshot Maven coordinate for `snapshot-comment`; `validate-only: true` marks a module that must be built and tested but not published, because this change will never release it). When `stage == 'release'`, an array of `{module, scala-version, version}` rows (publish-matrix dimensions only; the release notes travel to `release-tag` as the `changeset-changelogs` artifact). Empty array otherwise. Rendered as `\uXXXX`-escaped JSON so that no masked secret can appear literally in it — a job output containing one is silently dropped by the runner — which `fromJson`, `jq` and `JSON.parse` all decode transparently. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.matrix }}
   stage:
     description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with VERSION bumps to publish). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
@@ -64,10 +64,17 @@ runs:
     #         the change through scopes outside `changesetAffectedScopes` (e.g. a
     #         `dependsOn(x % Test)` consumer), or only its own test sources changed.
     #         Gate the snapshot publish step on `!matrix.validate-only`.
-    #       - `release`:  `[{module, scala-version, version, changelog}, ...]` —
-    #         publish-matrix dimensions plus release-tag note body.
+    #       - `release`:  `[{module, scala-version, version}, ...]` — publish-matrix
+    #         dimensions only. The release notes for those modules travel to
+    #         `release-tag` mode as the `changeset-changelogs` artifact, keeping
+    #         unbounded prose out of a job output capped at 1 MB.
     #       - otherwise: `[]`.
-    #     Hard-fails the action when the release-stage payload exceeds 400 KB.
+    #     Emitted as `\uXXXX`-escaped JSON: equivalent for `fromJson`, `jq` and
+    #     `JSON.parse`, but the text carries no literal substring of the values in
+    #     it. The runner silently discards a job output whose value contains a
+    #     masked secret, and that failure is invisible — the run fails with no
+    #     failing job, because the consumer's `fromJson` never evaluates — so a
+    #     module named after a secret must not be able to sink a release.
     # Run on every event; the consumer routes the single matrix into the right
     # downstream jobs by gating on `stage`.
 
@@ -90,7 +97,7 @@ runs:
               fi
               exit 1
             }
-            MATRIX=$(jq -c . target/changeset/matrix.json)
+            MATRIX=$(cat target/changeset/matrix-escaped.json)
             [ "$MATRIX" != "[]" ] && STAGE="validate"
             ;;
           push)
@@ -98,21 +105,23 @@ runs:
               STAGE="apply-changesets"
             else
               sbt "changesetMatrix release"
-              MATRIX=$(jq -c . target/changeset/matrix.json)
-              if [ "$MATRIX" != "[]" ]; then
-                STAGE="release"
-                BYTES=$(printf '%s' "$MATRIX" | wc -c | tr -d ' ')
-                if [ "$BYTES" -gt 400000 ]; then
-                  echo "::error::matrix payload is $BYTES bytes (UTF-8); GitHub Actions job outputs are capped at 1 MB UTF-16 (~500 KB UTF-8). Reduce changelog verbosity or split the release."
-                  exit 1
-                fi
-              fi
+              MATRIX=$(cat target/changeset/matrix-escaped.json)
+              [ "$MATRIX" != "[]" ] && STAGE="release"
             fi
             ;;
         esac
 
         echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
         echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+    - name: Upload release notes
+      if: inputs.mode == 'detect' && steps.detect.outputs.stage == 'release'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: changeset-changelogs
+        path: target/changeset/changelogs.json
+        retention-days: 1
+        overwrite: true
 
     # ─── Apply-changesets ────────────────────────
     # Bumps VERSION files (via `changesetVersion`) and upserts the
@@ -188,11 +197,19 @@ runs:
     # ─── Release-tag ─────────────────────────────
     # Iterates the release-stage `matrix` (as produced by `detect`) and creates one
     # GitHub release per distinct module via the Octokit client in `actions/github-
-    # script`. Rows carry `module`, `scala-version`, `version`, and `changelog`;
-    # duplicate module rows (from cross-built modules) are deduped in-script.
+    # script`. Rows carry `module`, `scala-version` and `version`; duplicate module
+    # rows (from cross-built modules) are deduped in-script. The notes body comes
+    # from the `changeset-changelogs` artifact that `detect` uploaded in this same
+    # run — downloaded here so consumers need no checkout and no extra step.
     # Existing tags are skipped, making reruns idempotent. Per-entry failures are
     # collected and reported via `core.setFailed` at the end — a single bad release
     # doesn't sink the rest. Run after the publish job(s) succeed.
+
+    - name: Download release notes
+      if: inputs.mode == 'release-tag'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: changeset-changelogs
 
     - name: Create GitHub releases
       if: inputs.mode == 'release-tag'
@@ -203,9 +220,15 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         script: |
+          const fs = require('fs');
+
           const matrix = JSON.parse(process.env.MATRIX);
           const target = process.env.TARGET;
           const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+
+          const changelogs = fs.existsSync('changelogs.json')
+            ? JSON.parse(fs.readFileSync('changelogs.json', 'utf8'))
+            : {};
 
           // Matrix has one row per (module, scala-version); dedupe to one release per module.
           const seen = new Set();
@@ -235,7 +258,7 @@ runs:
                 tag_name: tag,
                 target_commitish: target,
                 name: tag,
-                body: row.changelog,
+                body: changelogs[row.module] ?? row.changelog ?? '',
               });
               core.info(`Created ${tag}`);
             } catch (err) {
