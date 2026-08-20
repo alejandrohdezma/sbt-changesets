@@ -1,4 +1,4 @@
-documentation
+Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Action)
 
 `sbt-changesets` provides a better (and easier) way to manage libraries. Specially useful for company-internal monorepos, bringing changeset-based versioning to Scala multi-module builds. Developers describe their changes in small markdown files, and the plugin takes care of version bumps, dependency cascade, and changelog generation.
 
@@ -11,7 +11,7 @@ documentation
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.13.0")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.14.0")
 ```
 
 The same coordinate is published for both **sbt 1.x** (Scala 2.12) and **sbt 2.x** (Scala 3).
@@ -112,7 +112,7 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.13.0` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.14.0` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -154,7 +154,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.13.0
+        uses: alejandrohdezma/sbt-changesets@v0.14.0
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -182,7 +182,7 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.13.0
+      - uses: alejandrohdezma/sbt-changesets@v0.14.0
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -211,7 +211,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.13.0
+      - uses: alejandrohdezma/sbt-changesets@v0.14.0
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -235,7 +235,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.13.0
+      - uses: alejandrohdezma/sbt-changesets@v0.14.0
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -260,7 +260,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.13.0
+      - uses: alejandrohdezma/sbt-changesets@v0.14.0
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -289,7 +289,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.13.0
+      - uses: alejandrohdezma/sbt-changesets@v0.14.0
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
