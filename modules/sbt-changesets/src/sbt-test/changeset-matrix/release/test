@@ -14,5 +14,8 @@ $ exec git commit --no-gpg-sign -m "Bump versions"
 # Run the command
 > changesetMatrix release
 
-# Verify the enriched release matrix is emitted (sorted, with version + changelog)
+# Verify the release matrix is emitted (sorted, with version)
 $ must-mirror target/changeset/matrix.json expected/matrix.json
+
+# Verify the changelogs are emitted separately, one entry per changed module
+$ must-mirror target/changeset/changelogs.json expected/changelogs.json

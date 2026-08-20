@@ -425,10 +425,15 @@ object Commands {
   }
 
   /** Detects modules whose VERSION file changed in the last commit and emits a
-    * `[{module, scala-version, version, changelog}, ...]` matrix to `target/changeset/matrix.json`.
+    * `[{module, scala-version, version}, ...]` matrix to `target/changeset/matrix.json` plus a
+    * `{"<module>": "<changelog>"}` object to `target/changeset/changelogs.json`.
     *
-    * The `version` is read directly from `modules/<module>/VERSION` and the `changelog` is the matching `## <version>`
+    * The `version` is read directly from `modules/<module>/VERSION` and each changelog is the matching `## <version>`
     * entry from `modules/<module>/CHANGELOG.md`.
+    *
+    * The changelogs live in their own file, and travel between jobs as a workflow artifact, because GitHub Actions
+    * silently drops a job output whose value contains a masked secret: a single changelog sentence containing a
+    * credential as a substring would otherwise sink the whole release.
     */
   private def computeReleaseMatrix(state: State): State = {
     val extracted = Project.extract(state)
@@ -442,29 +447,35 @@ object Commands {
       .flatMap(_.stripPrefix("modules/").split("/").headOption)
       .toSet
       .intersect(refs.keySet)
+      .toList
+      .sorted
 
-    val rows = changed.toList.sorted.flatMap { name =>
-      val dir       = base / "modules" / name
-      val ver       = IO.read(dir / "VERSION").trim
-      val changelog = Changesets.extractChangelogEntry(dir / "CHANGELOG.md", ver)
+    val versions = changed.map(name => name -> IO.read(base / "modules" / name / "VERSION").trim)
 
+    val rows = versions.flatMap { case (name, ver) =>
       refs.get(name).toList.flatMap { ref =>
         extracted.get(ref / Keys.crossScalaVersions).sorted.map { sv =>
           Json.obj(
             "module"        := name,
             "scala-version" := sv,
-            "version"       := ver,
-            "changelog"     := changelog
+            "version"       := ver
           )
         }
       }
     }
 
-    val json = Json.arr(rows *)
-    val file = base / "target" / "changeset" / "matrix.json"
-    IO.write(file, json.show())
+    val changelogs = versions.map { case (name, ver) =>
+      name := Changesets.extractChangelogEntry(base / "modules" / name / "CHANGELOG.md", ver)
+    }
 
-    state.log.info(s"Wrote release-stage matrix to ${Colors.path(file)}")
+    val matrixFile    = base / "target" / "changeset" / "matrix.json"
+    val changelogFile = base / "target" / "changeset" / "changelogs.json"
+
+    IO.write(matrixFile, Json.arr(rows *).show())
+    IO.write(changelogFile, Json.obj(changelogs *).show())
+
+    state.log.info(s"Wrote release-stage matrix to ${Colors.path(matrixFile)}")
+    state.log.info(s"Wrote release-stage changelogs to ${Colors.path(changelogFile)}")
     state
   }
 
