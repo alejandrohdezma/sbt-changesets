@@ -47,23 +47,6 @@ sealed trait Json {
         .mkString("{\n", ",\n", "\n" + " " * indent + "}")
   }
 
-  /** Renders the JSON on a single line, with every character of every string (keys included) written as a `\\uXXXX`
-    * escape.
-    *
-    * The result is equivalent JSON — any parser, GitHub Actions' `fromJson` included, decodes it back to the same
-    * values — but its text contains no literal substring of the strings it carries. That is what makes it safe to hand
-    * to a GitHub Actions job output: the runner silently discards an output whose value contains a masked secret, and
-    * the resulting failure is invisible, since the consumer's `fromJson` then fails to evaluate before its job is ever
-    * created. With every character escaped there is nothing left for the masker to match.
-    */
-  def showEscaped: String = this match {
-    case Json.JsonString(value)   => Json.escapedStr(value)
-    case Json.JsonBoolean(value)  => value.toString
-    case Json.JsonArray(values)   => values.map(_.showEscaped).mkString("[", ",", "]")
-    case Json.JsonObject(entries) =>
-      entries.map { case (k, v) => Json.escapedStr(k) + ":" + v.showEscaped }.mkString("{", ",", "}")
-  }
-
 }
 
 object Json {
@@ -82,10 +65,6 @@ object Json {
 
   /** Wraps a string as a JSON string literal (with quotes and escaping). */
   private def str(s: String): String = "\"" + escape(s) + "\""
-
-  /** Wraps a string as a JSON string literal with every character written as a `\\uXXXX` escape. */
-  private def escapedStr(s: String): String =
-    s.map(c => f"\\u${c.toInt}%04x").mkString("\"", "", "\"")
 
   /** Creates a JSON string value. */
   def apply(value: String): Json = JsonString(value)
