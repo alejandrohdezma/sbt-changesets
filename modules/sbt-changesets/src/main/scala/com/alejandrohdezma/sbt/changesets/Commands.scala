@@ -185,14 +185,11 @@ object Commands {
        |affected.
        |
        |For `release`: detects modules whose VERSION file changed in the last
-       |commit, expands by `crossScalaVersions`, attaches the `version` per row,
-       |and writes each module's changelog entry to
-       |target/changeset/changelogs.json.
+       |commit, expands by `crossScalaVersions`, and attaches release
+       |`{version, changelog}` per row.
        |
-       |Either way, writes the result to target/changeset/matrix.json, plus a
-       |`\\uXXXX`-escaped single-line copy in matrix-escaped.json to hand to a
-       |GitHub Actions job output. Suitable as input for a GitHub Actions
-       |`matrix.include` strategy.""".stripMargin
+       |Either way, writes the result to target/changeset/matrix.json. Suitable
+       |as input for a GitHub Actions `matrix.include` strategy.""".stripMargin
   ) {
     case (state, "validate") =>
       computeValidateMatrix(state)
@@ -339,7 +336,7 @@ object Commands {
   // ─── Internal helpers ─────────────────────────
 
   /** Validates changesets, computes affected modules (changed + transitive dependents) and emits a
-    * `[{module, scala-version, version, coordinate, validate-only}, ...]` matrix (see [[writeMatrix]]).
+    * `[{module, scala-version, version, coordinate, validate-only}, ...]` matrix to `target/changeset/matrix.json`.
     *
     * Unlike the release cascade, this matrix follows `dependsOn` edges through '''every''' scope, treats a change to
     * '''any''' source set as a change, and includes every module marked `validate-only` by a changeset: a module whose
@@ -419,35 +416,24 @@ object Commands {
       }
     }
 
-    writeMatrix(base, rows, "validate", state)
-  }
-
-  /** Writes the work matrix to `target/changeset/matrix.json` (indented, for humans) and to
-    * `target/changeset/matrix-escaped.json` (single line, every string character `\\uXXXX`-escaped, for the GitHub
-    * Actions job output — see [[Json.showEscaped]]).
-    */
-  private def writeMatrix(base: File, rows: Seq[Json], stage: String, state: State): State = {
-    val json        = Json.arr(rows *)
-    val file        = base / "target" / "changeset" / "matrix.json"
-    val escapedFile = base / "target" / "changeset" / "matrix-escaped.json"
-
+    val json = Json.arr(rows *)
+    val file = base / "target" / "changeset" / "matrix.json"
     IO.write(file, json.show())
-    IO.write(escapedFile, json.showEscaped)
 
-    state.log.info(s"Wrote $stage-stage matrix to ${Colors.path(file)}")
+    state.log.info(s"Wrote validate-stage matrix to ${Colors.path(file)}")
     state
   }
 
   /** Detects modules whose VERSION file changed in the last commit and emits a
-    * `[{module, scala-version, version}, ...]` matrix (see [[writeMatrix]]) plus a `{"<module>": "<changelog>"}` object
-    * to `target/changeset/changelogs.json`.
+    * `[{module, scala-version, version}, ...]` matrix to `target/changeset/matrix.json` plus a
+    * `{"<module>": "<changelog>"}` object to `target/changeset/changelogs.json`.
     *
     * The `version` is read directly from `modules/<module>/VERSION` and each changelog is the matching `## <version>`
     * entry from `modules/<module>/CHANGELOG.md`.
     *
-    * The changelogs live in their own file, and travel between jobs as a workflow artifact rather than as part of the
-    * matrix, to keep the job output small: GitHub Actions caps a job's outputs at 1 MB, and release notes have no
-    * bound.
+    * The changelogs live in their own file, and travel between jobs as a workflow artifact, because GitHub Actions
+    * silently drops a job output whose value contains a masked secret: a single changelog sentence containing a
+    * credential as a substring would otherwise sink the whole release.
     */
   private def computeReleaseMatrix(state: State): State = {
     val extracted = Project.extract(state)
@@ -482,12 +468,15 @@ object Commands {
       name := Changesets.extractChangelogEntry(base / "modules" / name / "CHANGELOG.md", ver)
     }
 
+    val matrixFile    = base / "target" / "changeset" / "matrix.json"
     val changelogFile = base / "target" / "changeset" / "changelogs.json"
 
+    IO.write(matrixFile, Json.arr(rows *).show())
     IO.write(changelogFile, Json.obj(changelogs *).show())
-    state.log.info(s"Wrote release-stage changelogs to ${Colors.path(changelogFile)}")
 
-    writeMatrix(base, rows, "release", state)
+    state.log.info(s"Wrote release-stage matrix to ${Colors.path(matrixFile)}")
+    state.log.info(s"Wrote release-stage changelogs to ${Colors.path(changelogFile)}")
+    state
   }
 
   /** Returns a map from module name to its `ProjectRef`, filtered to projects with `packageIsModule := true`. */
