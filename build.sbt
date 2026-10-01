@@ -1,5 +1,5 @@
 ThisBuild / scalaVersion                  := "2.13.18"
-ThisBuild / crossScalaVersions            := Seq(scalaVersion.value, "3.8.4")
+ThisBuild / crossScalaVersions            := Seq(scalaVersion.value, "3.9.0")
 ThisBuild / organization                  := "com.alejandrohdezma"
 ThisBuild / pluginCrossBuild / sbtVersion := scalaVersion.value.on(2)("1.12.12").getOrElse("2.0.0")
 ThisBuild / versionPolicyIntention        := Compatibility.BinaryAndSourceCompatible
