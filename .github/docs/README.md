@@ -97,6 +97,7 @@ When changesets are merged to main branch, run `changesetVersion`. This:
 4. Prepends new entries to each module's `CHANGELOG.md`.
 5. Removes processed changeset files.
 6. Writes `target/changeset/version-summary.json` with old/new versions.
+7. Reloads the build, so commands chained after it (e.g. `mdoc`) see the new versions.
 
 Modules that are only bumped through cascade get auto-generated descriptions listing which dependencies changed.
 
@@ -213,7 +214,7 @@ Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix 
 
 Bumps `VERSION` files via `changesetVersion` and upserts the **Version Packages** pull request on the `changeset-release/main` branch. Run on push to main when `detect.changesets-count != 0` (i.e. a developer's PR carrying changeset files just merged).
 
-Pass `extra-command` to chain additional sbt commands after `changesetVersion` in the same sbt invocation — useful for regenerating doc files (e.g. `mdoc`) so they're committed as part of the same version-PR commit.
+Pass `extra-command` to chain additional sbt commands after `changesetVersion` in the same sbt invocation — useful for regenerating doc files (e.g. `mdoc`) so they're committed as part of the same version-PR commit. `changesetVersion` reloads the build once it has bumped the `VERSION` files, so those commands see the new versions.
 
 ### `release-tag` mode
 

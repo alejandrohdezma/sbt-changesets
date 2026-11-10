@@ -102,6 +102,7 @@ object Commands {
        |  3. Updates each module's CHANGELOG.md with a new version entry
        |  4. Removes processed changeset files
        |  5. Writes a version summary to target/changeset/version-summary.json
+       |  6. Reloads the build, so commands chained after it see the new versions
        |
        |Entries marked `validate-only` carry no bump: they exist to pull a module
        |into the validate-stage matrix, so they are consumed without touching its
@@ -165,7 +166,7 @@ object Commands {
         s"Left unreleased (validate-only): $names"
       }
 
-    state
+    if (summary.nonEmpty) "reload" :: state else state
   }
 
   val changesetMatrix: Command = Command.single(
