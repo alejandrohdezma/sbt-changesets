@@ -502,7 +502,8 @@ object Commands {
     *
     * A changed file only flags its module when it lives in a source set whose scope is listed in `scopes`; changes
     * confined to other source sets (e.g. `src/test` when only `"compile"` is given) are ignored. Files outside every
-    * source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts every source set.
+    * source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts every source set. A changed file
+    * under one of a module's `changesetWatchedPaths` flags that module whatever the `scopes`.
     *
     * Only returns names that correspond to actual SBT modules (validated via `packageIsModule` setting).
     *
@@ -540,6 +541,18 @@ object Commands {
 
     def ignorable(path: String) = excludedDirs.exists(d => path == d || path.startsWith(d + "/"))
 
+    val watched = for {
+      (name, ref) <- refs.toList
+      file        <- extracted.get(ref / changesetWatchedPaths)
+      relative    <- file.relativeTo(base).toList
+    } yield name -> relative.getPath.replace(File.separatorChar, '/')
+
+    val watchedPaths = "modules/" +: watched.map(_._2)
+
+    def watchedBy(path: String) = watched.collect {
+      case (name, dir) if path == dir || path.startsWith(dir + "/") => name
+    }
+
     val baseBranch = extracted.get(ThisBuild / changesetBaseBranch)
 
     val committed = Try {
@@ -549,13 +562,14 @@ object Commands {
       ""
     }.getOrElse("")
     val uncommitted = Process(Seq("git", "diff", "--name-only", "HEAD"), base).!!.trim
-    val untracked   = Process(Seq("git", "ls-files", "--others", "--exclude-standard", "modules/"), base).!!.trim
+    val untracked   =
+      Process("git" +: "ls-files" +: "--others" +: "--exclude-standard" +: "--" +: watchedPaths, base).!!.trim
 
     (committed + "\n" + uncommitted + "\n" + untracked).linesIterator.flatMap {
       case path if path.startsWith("modules/") && !ignorable(path) =>
-        path.stripPrefix("modules/").split("/").headOption
+        path.stripPrefix("modules/").split("/").headOption.toList ++ watchedBy(path)
 
-      case _ => None
+      case path => watchedBy(path)
     }.toSet.intersect(refs.keySet)
   }
 

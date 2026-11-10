@@ -78,6 +78,13 @@ object ChangesetPlugin extends AutoPlugin {
         "to it for a module that is also published to another ecosystem, e.g. a \"toml\" snippet for a Rust crate."
     }.withRank(KeyRanks.Invisible)
 
+    val changesetWatchedPaths = settingKey[Seq[File]] {
+      "Files or directories outside this module's directory whose changes count as a change to the module, e.g. " +
+        "templates the module's artifacts are generated from. A change under one of them requires a changeset for " +
+        "the module and adds it to the validate-stage matrix, like a change to its `src/main`: " +
+        "`changesetAffectedScopes` doesn't filter them. Defaults to Nil."
+    }.withRank(KeyRanks.Invisible)
+
     /** Lets `changesetCoordinates += "<snippet>"` append a plain string as a `"scala"` snippet. */
     implicit val changesetScalaCoordinateAppend: Append.Value[Seq[(String, String)], String] =
       (coordinates, coordinate) => coordinates :+ ("scala" -> coordinate)
@@ -87,13 +94,14 @@ object ChangesetPlugin extends AutoPlugin {
   import autoImport.*
 
   override def projectSettings = Seq(
-    version              := Settings.versionFromFile.value,
-    versionScheme        := Some("early-semver"),
-    homepage             := scmInfo.value.map(_.browseUrl),
-    scmInfo              := Settings.scmInfoFromGit.value,
-    changesetAlwaysBump  := false,
-    changesetCoordinates := Nil,
-    changesetCoordinates += s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
+    version               := Settings.versionFromFile.value,
+    versionScheme         := Some("early-semver"),
+    homepage              := scmInfo.value.map(_.browseUrl),
+    scmInfo               := Settings.scmInfoFromGit.value,
+    changesetAlwaysBump   := false,
+    changesetWatchedPaths := Nil,
+    changesetCoordinates  := Nil,
+    changesetCoordinates  += s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
   )
 
   override def buildSettings = Seq(
