@@ -159,6 +159,9 @@ runs:
     # carry `module`, `scala-version`, `version`, `coordinate`, and `validate-only`;
     # this step drops `validate-only` rows (they publish no snapshot) and dedupes by
     # module so each release is listed once. Posts nothing when no rows remain.
+    # The comment is found again by the hidden marker on its first line (or, for
+    # comments posted before the marker existed, by its heading; the newest match
+    # wins), so comments that other steps post on the PR are never overwritten.
 
     - name: Post snapshot coordinates comment
       if: inputs.mode == 'snapshot-comment'
@@ -177,8 +180,10 @@ runs:
         fi
 
         BLOCKS=$(echo "$PUBLISHED" | jq -r 'group_by(.module) | map(.[0]) | .[] | "```scala\n\(.coordinate)\n```"')
+        MARKER='<!-- sbt-changesets:snapshot-comment -->'
         BODY_FILE=$(mktemp)
         cat > "$BODY_FILE" <<EOF
+        ${MARKER}
         ### Snapshot releases
 
         Install with:
@@ -186,8 +191,15 @@ runs:
 
         _Updated on each push to this PR._
         EOF
-        gh pr comment "$PR_NUMBER" --edit-last --body-file "$BODY_FILE" 2>/dev/null \
-          || gh pr comment "$PR_NUMBER" --body-file "$BODY_FILE"
+        COMMENT_IDS=$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+          --jq ".[] | select(.body | startswith(\"$MARKER\") or startswith(\"### Snapshot releases\")) | .id")
+        COMMENT_ID=${COMMENT_IDS##*$'\n'}
+
+        if [ -n "$COMMENT_ID" ]; then
+          gh api -X PATCH "repos/$GH_REPO/issues/comments/$COMMENT_ID" -F body=@"$BODY_FILE" > /dev/null
+        else
+          gh pr comment "$PR_NUMBER" --body-file "$BODY_FILE"
+        fi
         rm -f "$BODY_FILE"
 
     # ─── Release-tag ─────────────────────────────
