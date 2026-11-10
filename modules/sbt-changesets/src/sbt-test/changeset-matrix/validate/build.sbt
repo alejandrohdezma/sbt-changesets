@@ -10,7 +10,10 @@ lazy val `module-c` = module.settings(changesetAlwaysBump := true)
 
 lazy val `module-d` = module.settings(crossPaths := false, crossScalaVersions := Seq("3.3.7"))
 
-lazy val `module-e` = module.settings(changesetCoordinate ~= { _ + " % \"test\"" })
+lazy val `module-e` = module
+  .settings(changesetCoordinates ~= { _.map { case (language, coordinate) => language -> s"""$coordinate % "test"""" } })
+  .settings(changesetCoordinates += s""""com.example" %% "module-e-extra" % "${version.value}"""")
+  .settings(changesetCoordinates += "toml" -> s"""module-e = "=${version.value}"""")
 
 // Publishes under an artifactId different from its project name; the coordinate must track `moduleName`.
 lazy val `module-f` = module.settings(moduleName := "module-f-renamed")

@@ -102,6 +102,7 @@ object Commands {
        |  3. Updates each module's CHANGELOG.md with a new version entry
        |  4. Removes processed changeset files
        |  5. Writes a version summary to target/changeset/version-summary.json
+       |  6. Reloads the build, so commands chained after it see the new versions
        |
        |Entries marked `validate-only` carry no bump: they exist to pull a module
        |into the validate-stage matrix, so they are consumed without touching its
@@ -165,7 +166,7 @@ object Commands {
         s"Left unreleased (validate-only): $names"
       }
 
-    state
+    if (summary.nonEmpty) "reload" :: state else state
   }
 
   val changesetMatrix: Command = Command.single(
@@ -177,7 +178,7 @@ object Commands {
        |anything at all — they are released alongside any bump, so they must be
        |validated alongside it too), expands each by `crossScalaVersions`, and
        |attaches snapshot
-       |`{version, coordinate}` per row. Modules that this change will never release
+       |`{version, coordinates}` per row. Modules that this change will never release
        |— reachable only through scopes outside `changesetAffectedScopes`, e.g. a
        |`dependsOn(x % Test)` consumer — are included as `validate-only` rows so
        |they get built and tested without publishing a snapshot. Set
@@ -336,7 +337,7 @@ object Commands {
   // ─── Internal helpers ─────────────────────────
 
   /** Validates changesets, computes affected modules (changed + transitive dependents) and emits a
-    * `[{module, scala-version, version, coordinate, validate-only}, ...]` matrix to `target/changeset/matrix.json`.
+    * `[{module, scala-version, version, coordinates, validate-only}, ...]` matrix to `target/changeset/matrix.json`.
     *
     * Unlike the release cascade, this matrix follows `dependsOn` edges through '''every''' scope, treats a change to
     * '''any''' source set as a change, and includes every module marked `validate-only` by a changeset: a module whose
@@ -345,7 +346,7 @@ object Commands {
     * i.e. modules that will never be released because of this change — carry `validate-only: true` so consumers can
     * build and test them without publishing a snapshot.
     *
-    * The `version` and `coordinate` come from sbt's `version` and `organization` settings — i.e. the snapshot version
+    * The `version` and `coordinates` come from sbt's `version` and `organization` settings — i.e. the snapshot version
     * including any `SNAPSHOT_SUFFIX`.
     */
   private def computeValidateMatrix(state: State): State = {
@@ -409,7 +410,9 @@ object Commands {
             "module"        := name,
             "scala-version" := sv,
             "version"       := extracted.get(ref / version),
-            "coordinate"    := extracted.get(ref / changesetCoordinate),
+            "coordinates"   -> Json.arr(extracted.get(ref / changesetCoordinates).map { case (language, coordinate) =>
+              Json.obj("language" := language, "coordinate" := coordinate)
+            } *),
             "validate-only" := !releaseAffected.contains(name)
           )
         }
@@ -499,7 +502,8 @@ object Commands {
     *
     * A changed file only flags its module when it lives in a source set whose scope is listed in `scopes`; changes
     * confined to other source sets (e.g. `src/test` when only `"compile"` is given) are ignored. Files outside every
-    * source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts every source set.
+    * source set (e.g. `build.sbt`, `VERSION`) always flag the module, and `"*"` counts every source set. A changed file
+    * under one of a module's `changesetWatchedPaths` flags that module whatever the `scopes`.
     *
     * Only returns names that correspond to actual SBT modules (validated via `packageIsModule` setting).
     *
@@ -537,6 +541,18 @@ object Commands {
 
     def ignorable(path: String) = excludedDirs.exists(d => path == d || path.startsWith(d + "/"))
 
+    val watched = for {
+      (name, ref) <- refs.toList
+      file        <- extracted.get(ref / changesetWatchedPaths)
+      relative    <- file.relativeTo(base).toList
+    } yield name -> relative.getPath.replace(File.separatorChar, '/')
+
+    val watchedPaths = "modules/" +: watched.map(_._2)
+
+    def watchedBy(path: String) = watched.collect {
+      case (name, dir) if path == dir || path.startsWith(dir + "/") => name
+    }
+
     val baseBranch = extracted.get(ThisBuild / changesetBaseBranch)
 
     val committed = Try {
@@ -546,13 +562,14 @@ object Commands {
       ""
     }.getOrElse("")
     val uncommitted = Process(Seq("git", "diff", "--name-only", "HEAD"), base).!!.trim
-    val untracked   = Process(Seq("git", "ls-files", "--others", "--exclude-standard", "modules/"), base).!!.trim
+    val untracked   =
+      Process("git" +: "ls-files" +: "--others" +: "--exclude-standard" +: "--" +: watchedPaths, base).!!.trim
 
     (committed + "\n" + uncommitted + "\n" + untracked).linesIterator.flatMap {
       case path if path.startsWith("modules/") && !ignorable(path) =>
-        path.stripPrefix("modules/").split("/").headOption
+        path.stripPrefix("modules/").split("/").headOption.toList ++ watchedBy(path)
 
-      case _ => None
+      case path => watchedBy(path)
     }.toSet.intersect(refs.keySet)
   }
 

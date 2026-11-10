@@ -1,0 +1,25 @@
+# Initialize git repo and create initial commit with all files
+$ exec git init
+$ exec git config user.email "test@test.com"
+$ exec git config user.name "Test"
+$ exec git add .
+$ exec git commit --no-gpg-sign -m "Initial commit"
+
+# No changes: nothing to validate
+> changesetMatrix validate
+$ must-mirror target/changeset/matrix.json expected/matrix-empty.json
+
+# A new (untracked) file under foo's watched path is a change to foo, which has no changeset -> fails
+$ copy-file changes/extra.template templates/extra.template
+-> changesetMatrix validate
+
+# So is a change to a tracked file under it, once the new file is committed
+$ exec git add templates/extra.template
+$ exec git commit --no-gpg-sign -m "Add extra template"
+$ copy-file changes/extra.template templates/crate.template
+-> changesetMatrix validate
+
+# With a changeset for foo, the matrix lists foo as released; bar doesn't watch the path and stays out
+$ copy-file changes/foo.md .changeset/foo.md
+> changesetMatrix validate
+$ must-mirror target/changeset/matrix.json expected/matrix.json

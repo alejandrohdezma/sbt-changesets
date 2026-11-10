@@ -6,8 +6,9 @@ $ exec git add .
 $ exec git commit --no-gpg-sign -m "Initial commit"
 
 # Apply pending changesets: module-a (minor) and module-b (patch) are bumped
-# and my-bom rides the same train via `changesetAlwaysBump`
-> changesetVersion
+# and my-bom rides the same train via `changesetAlwaysBump`. The build reloads
+# afterwards, so a chained command sees the bumped versions
+> changesetVersion; checkVersion
 
 $ must-mirror modules/module-a/VERSION expected/module-a-version
 $ must-mirror modules/module-b/VERSION expected/module-b-version

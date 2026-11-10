@@ -3,14 +3,12 @@
     "module": "module-a",
     "scala-version": "3.3.7",
     "version": "1.0.0-abc123-SNAPSHOT",
-    "coordinate": "\"com.example\" %% \"module-a\" % \"1.0.0-abc123-SNAPSHOT\"",
     "validate-only": false
   },
   {
     "module": "module-c",
     "scala-version": "3.3.7",
     "version": "1.0.0-abc123-SNAPSHOT",
-    "coordinate": "\"com.example\" %% \"module-c\" % \"1.0.0-abc123-SNAPSHOT\"",
     "validate-only": true
   }
 ]

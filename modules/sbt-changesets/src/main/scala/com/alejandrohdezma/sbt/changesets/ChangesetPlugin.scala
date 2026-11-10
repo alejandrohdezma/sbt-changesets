@@ -69,25 +69,39 @@ object ChangesetPlugin extends AutoPlugin {
         "Defaults to false."
     }.withRank(KeyRanks.Invisible)
 
-    val changesetCoordinate = settingKey[String] {
-      "Maven-style coordinate for this module, used as the `coordinate` field in the validate-stage matrix " +
-        "(consumed by `snapshot-comment`). Defaults to `\"org\" %% \"moduleName\" % \"version\"` for Scala modules " +
-        "and `\"org\" % \"moduleName\" % \"version\"` for Java modules (`crossPaths := false`); it tracks " +
-        "`moduleName`, so a module published under a different artifactId than its project name renders that " +
-        "artifactId. Override per-project for test-scoped modules (`... % \"test\"`) or custom artifact shapes."
+    val changesetCoordinates = settingKey[Seq[(String, String)]] {
+      "Install snippets for this module as (code block language, snippet) pairs, used as the `coordinates` field " +
+        "in the validate-stage matrix: `snapshot-comment` renders one code block per pair. Defaults to a single " +
+        "\"scala\" snippet: `\"org\" %% \"moduleName\" % \"version\"` for Scala modules and " +
+        "`\"org\" % \"moduleName\" % \"version\"` for Java modules (`crossPaths := false`); it tracks `moduleName`, " +
+        "so a module published under a different artifactId than its project name renders that artifactId. Append " +
+        "to it for a module that is also published to another ecosystem, e.g. a \"toml\" snippet for a Rust crate."
     }.withRank(KeyRanks.Invisible)
+
+    val changesetWatchedPaths = settingKey[Seq[File]] {
+      "Files or directories outside this module's directory whose changes count as a change to the module, e.g. " +
+        "templates the module's artifacts are generated from. A change under one of them requires a changeset for " +
+        "the module and adds it to the validate-stage matrix, like a change to its `src/main`: " +
+        "`changesetAffectedScopes` doesn't filter them. Defaults to Nil."
+    }.withRank(KeyRanks.Invisible)
+
+    /** Lets `changesetCoordinates += "<snippet>"` append a plain string as a `"scala"` snippet. */
+    implicit val changesetScalaCoordinateAppend: Append.Value[Seq[(String, String)], String] =
+      (coordinates, coordinate) => coordinates :+ ("scala" -> coordinate)
 
   }
 
   import autoImport.*
 
   override def projectSettings = Seq(
-    version             := Settings.versionFromFile.value,
-    versionScheme       := Some("early-semver"),
-    homepage            := scmInfo.value.map(_.browseUrl),
-    scmInfo             := Settings.scmInfoFromGit.value,
-    changesetAlwaysBump := false,
-    changesetCoordinate := s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
+    version               := Settings.versionFromFile.value,
+    versionScheme         := Some("early-semver"),
+    homepage              := scmInfo.value.map(_.browseUrl),
+    scmInfo               := Settings.scmInfoFromGit.value,
+    changesetAlwaysBump   := false,
+    changesetWatchedPaths := Nil,
+    changesetCoordinates  := Nil,
+    changesetCoordinates  += s""""${organization.value}" ${Settings.separator.value} "${moduleName.value}" % "${version.value}""""
   )
 
   override def buildSettings = Seq(
