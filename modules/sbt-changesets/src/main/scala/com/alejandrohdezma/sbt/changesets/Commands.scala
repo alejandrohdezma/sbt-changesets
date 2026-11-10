@@ -178,7 +178,7 @@ object Commands {
        |anything at all — they are released alongside any bump, so they must be
        |validated alongside it too), expands each by `crossScalaVersions`, and
        |attaches snapshot
-       |`{version, coordinate}` per row. Modules that this change will never release
+       |`{version, coordinates}` per row. Modules that this change will never release
        |— reachable only through scopes outside `changesetAffectedScopes`, e.g. a
        |`dependsOn(x % Test)` consumer — are included as `validate-only` rows so
        |they get built and tested without publishing a snapshot. Set
@@ -337,7 +337,7 @@ object Commands {
   // ─── Internal helpers ─────────────────────────
 
   /** Validates changesets, computes affected modules (changed + transitive dependents) and emits a
-    * `[{module, scala-version, version, coordinate, validate-only}, ...]` matrix to `target/changeset/matrix.json`.
+    * `[{module, scala-version, version, coordinates, validate-only}, ...]` matrix to `target/changeset/matrix.json`.
     *
     * Unlike the release cascade, this matrix follows `dependsOn` edges through '''every''' scope, treats a change to
     * '''any''' source set as a change, and includes every module marked `validate-only` by a changeset: a module whose
@@ -346,7 +346,7 @@ object Commands {
     * i.e. modules that will never be released because of this change — carry `validate-only: true` so consumers can
     * build and test them without publishing a snapshot.
     *
-    * The `version` and `coordinate` come from sbt's `version` and `organization` settings — i.e. the snapshot version
+    * The `version` and `coordinates` come from sbt's `version` and `organization` settings — i.e. the snapshot version
     * including any `SNAPSHOT_SUFFIX`.
     */
   private def computeValidateMatrix(state: State): State = {
@@ -410,7 +410,9 @@ object Commands {
             "module"        := name,
             "scala-version" := sv,
             "version"       := extracted.get(ref / version),
-            "coordinate"    := extracted.get(ref / changesetCoordinate),
+            "coordinates"   -> Json.arr(extracted.get(ref / changesetCoordinates).map { case (language, coordinate) =>
+              Json.obj("language" := language, "coordinate" := coordinate)
+            } *),
             "validate-only" := !releaseAffected.contains(name)
           )
         }
