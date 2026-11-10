@@ -231,6 +231,8 @@ lazy val `my-library` = module
 
 Posts (or edits) a PR comment listing snapshot coordinates produced by a matrix snapshot publish. Consumes the validate-stage `matrix` from `detect` and dedupes by module before rendering the markdown blocks. The action finds its own comment again by a hidden `<!-- sbt-changesets:snapshot-comment -->` marker, so other comments on the PR are never touched.
 
+This mode needs a `matrix` from version 0.16.0 or newer of the sbt plugin. Older versions emit one `coordinate` per row instead of the `coordinates` list that this mode renders. Keep the plugin in `project/plugins.sbt` and the action at the same version.
+
 ```yaml
   snapshot-comment:
     needs: [detect, validate]

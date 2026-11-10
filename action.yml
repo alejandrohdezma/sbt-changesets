@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ""
   matrix:
-    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinates` and `validate-only`) and `release-tag` (release-stage rows with `version`; the notes body comes from the `changeset-changelogs` artifact instead)."
+    description: "JSON array of rows as produced by the `detect` mode's `matrix` output. Used by `snapshot-comment` (validate-stage rows with `coordinates` and `validate-only`, which need version 0.16.0 or newer of the sbt plugin) and `release-tag` (release-stage rows with `version`; the notes body comes from the `changeset-changelogs` artifact instead)."
     required: false
     default: ""
   pr-number:
