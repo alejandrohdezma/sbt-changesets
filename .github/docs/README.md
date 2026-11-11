@@ -200,7 +200,7 @@ jobs:
 
 #### Customising the `coordinates` per module
 
-`snapshot-comment` renders one code block per entry in the `coordinates` field of a row. The field comes from the `changesetCoordinates` sbt setting: a list of (code block language, snippet) pairs. The default is a single `scala` snippet: `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`). It tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId.
+`snapshot-comment` renders each module as a collapsed block named after the module, with one code block per entry in the `coordinates` field of its row inside. The field comes from the `changesetCoordinates` sbt setting: a list of (code block language, snippet) pairs. The default is a single `scala` snippet: `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`). It tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId.
 
 Transform the default on individual projects when you want the snapshot-comment to render something different — for example, testkit modules that consumers always import in the `test` configuration:
 
@@ -219,6 +219,13 @@ lazy val `my-protos` = module
 ```
 
 The comment then lists both blocks for `my-protos`.
+
+Words after the first in the language work like the rest of a markdown fence's info string: the first word is the code block language, and the rest are file names, listed above the block (`"toml Cargo.toml build.rs"` lists `` `Cargo.toml`, `build.rs` ``). Use them to name the files each snippet goes into:
+
+```scala
+lazy val `my-protos` = module
+  .settings(changesetCoordinates += "toml Cargo.toml" -> s"""my-protos = { version = "=${version.value}" }""")
+```
 
 A plain string appends a `scala` snippet, for example to list a second artifact the module publishes:
 
