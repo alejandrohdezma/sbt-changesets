@@ -200,7 +200,7 @@ jobs:
 
 #### Customising the `coordinates` per module
 
-`snapshot-comment` renders one code block per entry in the `coordinates` field of a row. The field comes from the `changesetCoordinates` sbt setting: a list of (code block language, snippet) pairs. The default is a single `scala` snippet: `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`). It tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId.
+`snapshot-comment` renders each module as a collapsed block named after the module, with one code block per entry in the `coordinates` field of its row inside. The field comes from the `changesetCoordinates` sbt setting: a list of (code block language, snippet) pairs. The default is a single `scala` snippet: `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`). It tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId.
 
 Transform the default on individual projects when you want the snapshot-comment to render something different — for example, testkit modules that consumers always import in the `test` configuration:
 
