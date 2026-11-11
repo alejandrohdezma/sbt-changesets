@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.16.0")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.16.1")
 ```
 
 The same coordinate is published for both **sbt 1.x** (Scala 2.12) and **sbt 2.x** (Scala 3).
@@ -124,7 +124,7 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.16.0` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.16.1` and choose a mode depending on the context.
 
 ### `detect` mode
 
@@ -160,7 +160,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.16.0
+        uses: alejandrohdezma/sbt-changesets@v0.16.1
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -188,7 +188,7 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.0
+      - uses: alejandrohdezma/sbt-changesets@v0.16.1
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -200,7 +200,7 @@ jobs:
 
 #### Customising the `coordinates` per module
 
-`snapshot-comment` renders one code block per entry in the `coordinates` field of a row. The field comes from the `changesetCoordinates` sbt setting: a list of (code block language, snippet) pairs. The default is a single `scala` snippet: `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`). It tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId.
+`snapshot-comment` renders each module as a collapsed block named after the module, with one code block per entry in the `coordinates` field of its row inside. The field comes from the `changesetCoordinates` sbt setting: a list of (code block language, snippet) pairs. The default is a single `scala` snippet: `"org" %% "moduleName" % "version"` for Scala modules and `"org" % "moduleName" % "version"` for Java modules (`crossPaths := false`). It tracks `moduleName`, so a module published under a different artifactId than its project name (via `moduleName := ...`) renders that artifactId.
 
 Transform the default on individual projects when you want the snapshot-comment to render something different — for example, testkit modules that consumers always import in the `test` configuration:
 
@@ -220,6 +220,13 @@ lazy val `my-protos` = module
 
 The comment then lists both blocks for `my-protos`.
 
+Words after the first in the language work like the rest of a markdown fence's info string: the first word is the code block language, and the rest are file names, listed above the block (`"toml Cargo.toml build.rs"` lists `` `Cargo.toml`, `build.rs` ``). Use them to name the files each snippet goes into:
+
+```scala
+lazy val `my-protos` = module
+  .settings(changesetCoordinates += "toml Cargo.toml" -> s"""my-protos = { version = "=${version.value}" }""")
+```
+
 A plain string appends a `scala` snippet, for example to list a second artifact the module publishes:
 
 ```scala
@@ -238,7 +245,7 @@ This mode needs a `matrix` from version 0.16.0 or newer of the sbt plugin. Older
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.0
+      - uses: alejandrohdezma/sbt-changesets@v0.16.1
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -262,7 +269,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.0
+      - uses: alejandrohdezma/sbt-changesets@v0.16.1
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -287,7 +294,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.16.0
+      - uses: alejandrohdezma/sbt-changesets@v0.16.1
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -316,7 +323,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.0
+      - uses: alejandrohdezma/sbt-changesets@v0.16.1
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
