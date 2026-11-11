@@ -149,6 +149,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.event_name == 'push' && 'main' || format('pr-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   detect:
     runs-on: ubuntu-latest
@@ -332,6 +336,8 @@ jobs:
 ```
 
 `release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because the action's loop skips tags that already exist; new tags get created as expected.
+
+Run the push-to-main workflows one at a time with the `concurrency` group shown in the `detect` example. A module version stays untagged until `release-tag` finishes, so a push that lands while a release is still publishing would otherwise see the same untagged versions and publish them a second time. In one group, the later run waits and its `detect` sees the new tags. GitHub keeps one waiting run per group and cancels it when a newer push arrives, which loses nothing: pending changesets are files on `main` and missing tags stay missing, so the newest run does the work of the one it replaced.
 
 The same `matrix` output feeds both `publish` (as `matrix.include`, ignoring the extra `version` field) and `release-tag` (as a per-row loop, deduping by module). One source of truth for "what work needs to happen this run".
 
