@@ -75,7 +75,9 @@ object ChangesetPlugin extends AutoPlugin {
         "\"scala\" snippet: `\"org\" %% \"moduleName\" % \"version\"` for Scala modules and " +
         "`\"org\" % \"moduleName\" % \"version\"` for Java modules (`crossPaths := false`); it tracks `moduleName`, " +
         "so a module published under a different artifactId than its project name renders that artifactId. Append " +
-        "to it for a module that is also published to another ecosystem, e.g. a \"toml\" snippet for a Rust crate."
+        "to it for a module that is also published to another ecosystem, e.g. a \"toml\" snippet for a Rust crate. " +
+        "Words after the first in the language are file names, listed above the code block, e.g. " +
+        "\"toml Cargo.toml\" for a snippet that goes into `Cargo.toml`."
     }.withRank(KeyRanks.Invisible)
 
     val changesetWatchedPaths = settingKey[Seq[File]] {

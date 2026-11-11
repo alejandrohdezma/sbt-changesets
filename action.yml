@@ -159,8 +159,9 @@ runs:
     # carry `module`, `scala-version`, `version`, `coordinates` and `validate-only`;
     # this step drops `validate-only` rows (they publish no snapshot) and dedupes by
     # module so each release is listed once, as a collapsed block named after the
-    # module that holds one code block per entry in `coordinates`. Posts nothing
-    # when no rows remain.
+    # module that holds one code block per entry in `coordinates`. Words after the
+    # first in an entry's language (e.g. "toml Cargo.toml") are file names, listed
+    # above its code block. Posts nothing when no rows remain.
     # The comment is found again by the hidden marker on its first line (or, for
     # comments posted before the marker existed, by its heading; the newest match
     # wins), so comments that other steps post on the PR are never overwritten.
@@ -181,7 +182,16 @@ runs:
           exit 0
         fi
 
-        BLOCKS=$(echo "$PUBLISHED" | jq -r 'group_by(.module) | map(.[0]) | .[] | "<details><summary><code>\(.module)</code></summary>\n\n\(.coordinates | map("```\(.language)\n\(.coordinate)\n```") | join("\n"))\n\n</details>"')
+        BLOCKS=$(echo "$PUBLISHED" | jq -r '
+          def block:
+            (.language | index(" ")) as $i
+            | (if $i then .language[:$i] else .language end) as $language
+            | (if $i then .language[$i + 1:] | split(" ") | map(select(. != "") | "`\(.)`") else [] end) as $files
+            | (if $files == [] then "" else "> \($files | join(", "))\n\n" end) + "```\($language)\n\(.coordinate)\n```";
+
+          group_by(.module) | map(.[0]) | .[]
+            | "<details><summary><code>\(.module)</code></summary><br/>\n\n\(.coordinates | map(block) | join("\n\n"))\n\n</details>"
+        ')
         MARKER='<!-- sbt-changesets:snapshot-comment -->'
         BODY_FILE=$(mktemp)
         cat > "$BODY_FILE" <<EOF

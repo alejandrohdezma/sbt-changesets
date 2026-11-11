@@ -220,6 +220,13 @@ lazy val `my-protos` = module
 
 The comment then lists both blocks for `my-protos`.
 
+Words after the first in the language work like the rest of a markdown fence's info string: the first word is the code block language, and the rest are file names, listed above the block (`"toml Cargo.toml build.rs"` lists `` `Cargo.toml`, `build.rs` ``). Use them to name the files each snippet goes into:
+
+```scala
+lazy val `my-protos` = module
+  .settings(changesetCoordinates += "toml Cargo.toml" -> s"""my-protos = { version = "=${version.value}" }""")
+```
+
 A plain string appends a `scala` snippet, for example to list a second artifact the module publishes:
 
 ```scala
