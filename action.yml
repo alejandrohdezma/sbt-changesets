@@ -43,7 +43,7 @@ outputs:
     description: "The work matrix for this run, shape depending on `stage`. When `stage == 'validate'`, an array of `{module, scala-version, version, coordinates, validate-only}` rows (publish-matrix dimensions + snapshot coordinates for `snapshot-comment`; `validate-only: true` marks a module that must be built and tested but not published, because this change will never release it). When `stage == 'release'`, an array of `{module, scala-version, version}` rows (publish-matrix dimensions only; the release notes travel to `release-tag` as the `changeset-changelogs` artifact, never through this output, since a job output containing a masked secret is silently dropped). Empty array otherwise. Pass to `snapshot-comment` / `release-tag` modes' `matrix` input; consume as `matrix.include` for the validate/publish jobs. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.matrix }}
   stage:
-    description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with VERSION bumps to publish). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
+    description: "The workflow stage classification for this run: `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changeset files), `release` (push-to-main with module versions that have no `<module>@<version>` tag yet). Empty string for events with no downstream work. Use as the single gating condition for downstream jobs. (only set when mode is 'detect')"
     value: ${{ steps.detect.outputs.stage }}
 
 runs:
@@ -54,7 +54,8 @@ runs:
     # then emits two outputs:
     #   - `stage`: single dispatch classification — `validate` (PR with affected
     #     modules), `apply-changesets` (push with pending changesets), `release`
-    #     (push with VERSION bumps), or empty (nothing to do). Consumers gate every
+    #     (push with module versions that have no `<module>@<version>` tag yet),
+    #     or empty (nothing to do). Consumers gate every
     #     downstream job on this single value.
     #   - `matrix`: the work matrix for this run. Shape depends on `stage`:
     #       - `validate`: `[{module, scala-version, version, coordinates,
@@ -100,6 +101,7 @@ runs:
             if [ "$COUNT" != "0" ]; then
               STAGE="apply-changesets"
             else
+              git fetch --tags --force --quiet origin
               sbt "changesetMatrix release"
               MATRIX=$(jq -c . target/changeset/matrix.json)
               [ "$MATRIX" != "[]" ] && STAGE="release"

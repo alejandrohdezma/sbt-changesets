@@ -5,6 +5,11 @@ $ exec git config user.name "Test"
 $ exec git add .
 $ exec git commit --no-gpg-sign -m "Initial commit"
 
+# The initial versions are released
+$ exec git tag module-a@1.2.3
+$ exec git tag module-b@2.0.0
+$ exec git tag module-c@3.0.0
+
 # Simulate a version bump on module-a and module-b (but not module-c)
 $ copy-file changes/module-a-version modules/module-a/VERSION
 $ copy-file changes/module-b-version modules/module-b/VERSION
@@ -19,3 +24,15 @@ $ must-mirror target/changeset/matrix.json expected/matrix.json
 
 # Verify the changelogs are emitted separately, one entry per changed module
 $ must-mirror target/changeset/changelogs.json expected/changelogs.json
+
+# The release did not happen and another commit landed: the untagged versions are still released
+$ exec git commit --no-gpg-sign --allow-empty -m "Unrelated change"
+> changesetMatrix release
+$ must-mirror target/changeset/matrix.json expected/matrix.json
+$ must-mirror target/changeset/changelogs.json expected/changelogs.json
+
+# Once every version is tagged, there is nothing to release
+$ exec git tag module-a@1.2.4
+$ exec git tag module-b@2.0.1
+> changesetMatrix release
+$ must-mirror target/changeset/matrix.json expected/empty-matrix.json
