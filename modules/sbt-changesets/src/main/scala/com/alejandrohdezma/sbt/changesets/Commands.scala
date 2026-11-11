@@ -185,9 +185,9 @@ object Commands {
        |CHANGESET_SKIP_VALIDATION=true to skip the entry check while still computing
        |affected.
        |
-       |For `release`: detects modules whose VERSION file changed in the last
-       |commit, expands by `crossScalaVersions`, and attaches release
-       |`{version, changelog}` per row.
+       |For `release`: detects modules whose current VERSION has no
+       |`<module>@<version>` git tag yet, expands by `crossScalaVersions`, and
+       |attaches release `{version, changelog}` per row.
        |
        |Either way, writes the result to target/changeset/matrix.json. Suitable
        |as input for a GitHub Actions `matrix.include` strategy.""".stripMargin
@@ -427,12 +427,16 @@ object Commands {
     state
   }
 
-  /** Detects modules whose VERSION file changed in the last commit and emits a
+  /** Detects modules whose current VERSION has no `<module>@<version>` git tag and emits a
     * `[{module, scala-version, version}, ...]` matrix to `target/changeset/matrix.json` plus a
     * `{"<module>": "<changelog>"}` object to `target/changeset/changelogs.json`.
     *
     * The `version` is read directly from `modules/<module>/VERSION` and each changelog is the matching `## <version>`
     * entry from `modules/<module>/CHANGELOG.md`.
+    *
+    * The tags are the record of what was released (`release-tag` mode creates them after a successful publish), so a
+    * release that did not happen — a skipped CI run, a failed publish, or a push where pending changesets took
+    * precedence — is picked up by the next release run instead of being lost.
     *
     * The changelogs live in their own file, and travel between jobs as a workflow artifact, because GitHub Actions
     * silently drops a job output whose value contains a masked secret: a single changelog sentence containing a
@@ -443,17 +447,12 @@ object Commands {
     val base      = extracted.get(ThisBuild / baseDirectory)
     val refs      = moduleRefs(state)
 
-    val diff = Process(Seq("git", "diff", "--name-only", "HEAD~1", "--", "modules/*/VERSION"), base).!!.trim
+    val tags = Process(Seq("git", "tag", "--list"), base).!!.linesIterator.map(_.trim).toSet
 
-    val changed = diff.linesIterator
-      .filter(_.startsWith("modules/"))
-      .flatMap(_.stripPrefix("modules/").split("/").headOption)
-      .toSet
-      .intersect(refs.keySet)
-      .toList
-      .sorted
-
-    val versions = changed.map(name => name -> IO.read(base / "modules" / name / "VERSION").trim)
+    val versions = refs.keySet.toList.sorted
+      .filter(name => (base / "modules" / name / "VERSION").exists)
+      .map(name => name -> IO.read(base / "modules" / name / "VERSION").trim)
+      .filterNot { case (name, ver) => tags.contains(s"$name@$ver") }
 
     val rows = versions.flatMap { case (name, ver) =>
       refs.get(name).toList.flatMap { ref =>

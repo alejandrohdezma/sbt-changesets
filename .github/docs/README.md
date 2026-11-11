@@ -118,7 +118,9 @@ Modules with `changesetAlwaysBump := true` (default `false`) receive at least a 
 
 ### 5. Publishing releases (CI)
 
-After version bumps are committed, `changesetMatrix release` writes `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version}` rows for every (module, Scala version) whose `VERSION` file just changed — which feeds a `publish` matrix that publishes each pair on its own runner in parallel via `sbt "++<scala-version> <module>/publish"`. It also writes `target/changeset/changelogs.json`, a `{"<module>": "<notes>"}` object holding each module's `## <version>` entry, which a downstream `release-tag` job uses as the GitHub release notes.
+After version bumps are committed, `changesetMatrix release` writes `target/changeset/matrix.json` — a JSON array of `{module, scala-version, version}` rows for every (module, Scala version) whose current `VERSION` has no `<module>@<version>` git tag yet — which feeds a `publish` matrix that publishes each pair on its own runner in parallel via `sbt "++<scala-version> <module>/publish"`. It also writes `target/changeset/changelogs.json`, a `{"<module>": "<notes>"}` object holding each module's `## <version>` entry, which a downstream `release-tag` job uses as the GitHub release notes.
+
+The tags that `release-tag` creates are the record of what was released. A release that did not happen — a skipped CI run, a failed publish, or a push where pending changesets took precedence — stays untagged, so the next release run picks it up instead of losing it. In CI, `detect` fetches the tags before it computes the matrix; run `git fetch --tags` first when you run the command elsewhere. A module whose current `VERSION` was never released (or never tagged) is published by the first release run.
 
 The composite [GitHub Action](#github-actions) bundles this flow into `detect` mode, which (when the workflow runs on a Version Packages PR merge) emits `matrix` (for `publish`) alongside its PR-side outputs, and hands the notes to `release-tag` as an artifact.
 
@@ -130,7 +132,7 @@ This repository also provides a composite GitHub Action that orchestrates the fu
 
 Validates that all changed modules have changeset entries and emits exactly two outputs:
 
-- `stage`: a single dispatch classification — `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changesets), `release` (push-to-main with VERSION bumps to publish), or empty (nothing to do). Use as the single gating condition for every downstream job.
+- `stage`: a single dispatch classification — `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changesets), `release` (push-to-main with module versions that have no `<module>@<version>` tag yet), or empty (nothing to do). Use as the single gating condition for every downstream job.
 - `matrix`: the work matrix for this run; shape depends on `stage`.
   - `stage == 'validate'`: array of `{module, scala-version, version, coordinates, validate-only}` rows. Each row carries the publish-matrix dimensions, the snapshot coordinates, and whether the module is validated without being published. Plug into `matrix.include` for the validate job; pass to `snapshot-comment` mode.
   - `stage == 'release'`: array of `{module, scala-version, version}` rows carrying the publish-matrix dimensions. Plug into `matrix.include` for the publish job; pass to `release-tag` mode.
@@ -146,6 +148,10 @@ on:
   pull_request:
   push:
     branches: [main]
+
+concurrency:
+  group: ${{ github.event_name == 'push' && 'main' || format('pr-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect:
@@ -330,6 +336,8 @@ jobs:
 ```
 
 `release-tag` `needs: publish` so a publish failure on any matrix cell (e.g. one Scala version fails to compile) blocks all GitHub release creation — preventing half-published modules from getting tagged. Re-running after a fix proceeds cleanly because the action's loop skips tags that already exist; new tags get created as expected.
+
+Run the push-to-main workflows one at a time with the `concurrency` group shown in the `detect` example. A module version stays untagged until `release-tag` finishes, so a push that lands while a release is still publishing would otherwise see the same untagged versions and publish them a second time. In one group, the later run waits and its `detect` sees the new tags. GitHub keeps one waiting run per group and cancels it when a newer push arrives, which loses nothing: pending changesets are files on `main` and missing tags stay missing, so the newest run does the work of the one it replaced.
 
 The same `matrix` output feeds both `publish` (as `matrix.include`, ignoring the extra `version` field) and `release-tag` (as a per-row loop, deduping by module). One source of truth for "what work needs to happen this run".
 
