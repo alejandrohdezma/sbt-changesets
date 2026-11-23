@@ -1,4 +1,4 @@
-ThisBuild / scalaVersion                  := "2.13.18"
+ThisBuild / scalaVersion                  := _root_.scalafix.sbt.BuildInfo.scala212
 ThisBuild / crossScalaVersions            := Seq(scalaVersion.value, "3.10.1")
 ThisBuild / organization                  := "com.alejandrohdezma"
 ThisBuild / pluginCrossBuild / sbtVersion := scalaVersion.value.on(2)("1.12.15").getOrElse("2.0.0")
