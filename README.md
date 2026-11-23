@@ -11,7 +11,7 @@ Changeset-based versioning for Scala multi-module builds (sbt plugin + GitHub Ac
 Add the plugin to your `project/plugins.sbt`:
 
 ```sbt
-addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.16.2")
+addSbtPlugin("com.alejandrohdezma" % "sbt-changesets" % "0.16.3")
 ```
 
 The same coordinate is published for both **sbt 1.x** (Scala 2.12) and **sbt 2.x** (Scala 3).
@@ -66,6 +66,8 @@ Update the retry defaults.
 ```
 
 `validate-only` means "build and test this module, never release it". Such a module joins the validate-stage matrix as a `validate-only` row, and `changesetVersion` consumes the entry without touching its `VERSION` or `CHANGELOG.md`. It fits a module that the change affects without altering what it publishes — an update to one of its test-scoped dependencies, say. It is not a way to opt out of releasing a module whose own `src/main` changed: that still fails validation until it gets a real bump.
+
+A changeset file whose entries are all `validate-only` does not open a "Version Packages" pull request on its own, since that pull request would release nothing. The file stays on `main` until the next "Version Packages" pull request removes it with the other changesets. Until then, every pull request validates its modules as `validate-only` rows.
 
 ### 2. Validating changesets (CI)
 
@@ -126,13 +128,13 @@ The composite [GitHub Action](#github-actions) bundles this flow into `detect` m
 
 ## GitHub Actions
 
-This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.16.2` and choose a mode depending on the context.
+This repository also provides a composite GitHub Action that orchestrates the full CI workflow. Reference it as `alejandrohdezma/sbt-changesets@v0.16.3` and choose a mode depending on the context.
 
 ### `detect` mode
 
 Validates that all changed modules have changeset entries and emits exactly two outputs:
 
-- `stage`: a single dispatch classification — `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changesets), `release` (push-to-main with module versions that have no `<module>@<version>` tag yet), or empty (nothing to do). Use as the single gating condition for every downstream job.
+- `stage`: a single dispatch classification — `validate` (PR with affected modules), `apply-changesets` (push-to-main with pending changesets that bump a module), `release` (push-to-main with module versions that have no `<module>@<version>` tag yet), or empty (nothing to do). Use as the single gating condition for every downstream job.
 - `matrix`: the work matrix for this run; shape depends on `stage`.
   - `stage == 'validate'`: array of `{module, scala-version, version, coordinates, validate-only}` rows. Each row carries the publish-matrix dimensions, the snapshot coordinates, and whether the module is validated without being published. Plug into `matrix.include` for the validate job; pass to `snapshot-comment` mode.
   - `stage == 'release'`: array of `{module, scala-version, version}` rows carrying the publish-matrix dimensions. Plug into `matrix.include` for the publish job; pass to `release-tag` mode.
@@ -166,7 +168,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       - id: changesets
-        uses: alejandrohdezma/sbt-changesets@v0.16.2
+        uses: alejandrohdezma/sbt-changesets@v0.16.3
         with:
           mode: detect
           error-help-url: https://your-repo/docs/versioning  # shown on validation failure
@@ -194,7 +196,7 @@ jobs:
     if: needs.detect.outputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.2
+      - uses: alejandrohdezma/sbt-changesets@v0.16.3
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -251,7 +253,7 @@ This mode needs a `matrix` from version 0.16.0 or newer of the sbt plugin. Older
     needs: [detect, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.2
+      - uses: alejandrohdezma/sbt-changesets@v0.16.3
         with:
           mode: snapshot-comment
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -275,7 +277,7 @@ Loops over the release-stage `matrix` (as produced by `detect`) and creates one 
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.2
+      - uses: alejandrohdezma/sbt-changesets@v0.16.3
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
@@ -285,7 +287,7 @@ Optionally pass `target` to override the branch the releases point at (defaults 
 
 ### Putting it together: release workflow
 
-The push-to-main pipeline is dispatched by `detect.outputs.stage`: when there are pending changeset files `stage` is `apply-changesets` and the version-bump job runs; once that PR is merged `stage` becomes `release`, `publish` fans out one runner per `(module, Scala version)`, and `release-tag` creates one GitHub release per module.
+The push-to-main pipeline is dispatched by `detect.outputs.stage`: when there are pending changeset files that bump a module `stage` is `apply-changesets` and the version-bump job runs; once that PR is merged `stage` becomes `release`, `publish` fans out one runner per `(module, Scala version)`, and `release-tag` creates one GitHub release per module.
 
 ```yaml
 # .github/workflows/ci.yaml (continued)
@@ -300,7 +302,7 @@ jobs:
       - uses: actions/checkout@@v4
         with: { fetch-depth: 0 }
 
-      - uses: alejandrohdezma/sbt-changesets@v0.16.2
+      - uses: alejandrohdezma/sbt-changesets@v0.16.3
         with:
           mode: apply-changesets
           # Optional: regenerate docs as part of the same version-PR commit.
@@ -329,7 +331,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: alejandrohdezma/sbt-changesets@v0.16.2
+      - uses: alejandrohdezma/sbt-changesets@v0.16.3
         with:
           mode: release-tag
           matrix: ${{ needs.detect.outputs.matrix }}
